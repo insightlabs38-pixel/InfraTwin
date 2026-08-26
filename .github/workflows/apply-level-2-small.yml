@@ -26,7 +26,6 @@ jobs:
           tar -xzf /tmp/level2.tar.gz -C .
 
           for path in \
-            .github/workflows/ci.yml \
             README.md \
             package.json \
             apps/web/app/globals.css \
@@ -45,9 +44,11 @@ jobs:
             test -f "$path"
           done
 
+          # The runner token cannot change workflow files. Keep CI unchanged here;
+          # the authenticated GitHub connector applies the verified CI blob afterward.
+          git checkout HEAD -- .github/workflows/ci.yml
           rm -rf .github/level2_bundle_final .github/level2_bundle
           rm -f .github/level2-trigger.txt .github/level2-trigger-2.txt
-          rm -f .github/workflows/apply-level-2.yml .github/workflows/apply-level-2-small.yml
 
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
