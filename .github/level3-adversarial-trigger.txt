@@ -1,1 +1,0 @@
-trigger confirmed adversarial fix application v2
