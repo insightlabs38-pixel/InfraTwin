@@ -185,7 +185,7 @@ test('WebMCP base tools expose schemas/annotations and drive shared application 
   assert.equal(tools.get('propose_change')?.annotations?.readOnlyHint, false);
 
   await tools.get('simulate_change')!.execute({ disabledLinkIds: ['L1'], name: 'Agent maintenance' });
-  assert.deepEqual(activePatch?.disabledLinkIds, ['L1']);
+  assert.deepEqual(services.getActiveScenario()?.disabledLinkIds, ['L1']);
   assert.equal(project.links.find((link) => link.id === 'L1')?.available, true);
   await tools.get('propose_change')!.execute({ strategy: 'auto_mitigate', targetHeadroomPct: 20 });
   assert.ok(candidate);
