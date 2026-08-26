@@ -24,6 +24,7 @@ jobs:
           set -euo pipefail
           python3 scripts/level3-hardening-core.py
           python3 scripts/level3-hardening-ui.py
+          python3 scripts/level3-hardening-test-fix.py
 
       - name: Wire Playwright, strict includes, CI gate, docs, and ignores
         shell: bash
