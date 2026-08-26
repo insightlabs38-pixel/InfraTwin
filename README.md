@@ -1,36 +1,42 @@
 # InfraTwin
 
-InfraTwin is a browser-native network decision digital twin for change safety, capacity planning, and resilience. Human edits, deterministic solvers, evidence overlays, and WebMCP agents all operate on the same canonical browser state.
+InfraTwin is a browser-native network decision digital twin for change safety, capacity planning, resilience, and optimization. Human edits, deterministic solvers, evidence overlays, optimizer candidates, and WebMCP agents all operate on the same canonical browser state.
 
-## Current status: Level 2 green contender
+## Current status: Level 3 optimization contender
 
-Level 2 implements the resilience gate from the planning pack:
+Levels 0–2 are preserved while Level 3 adds a real browser-local optimization layer:
 
-- deterministic **ECMP** routing with equal split across all equal-cost shortest paths;
-- single-link N-1 enumeration over immutable model/scenario snapshots;
-- bounded browser Web Worker pool with deterministic async fallback;
-- live progress, user/agent cancellation, scenario/runtime/worker limits, and cancellation-safe results;
-- stale-result protection using both model and scenario hashes before publication;
-- deterministic worst-contingency ranking with displayed score components;
-- counterexample replay onto the shared topology workspace;
-- max-flow/min-cut bottleneck analysis with stable cut-edge IDs;
-- compute capability detection and graceful fallback when Workers, SharedArrayBuffer, or cross-origin isolation are unavailable;
-- state-derived WebMCP registration groups with independent `AbortSignal` lifetimes;
-- violation tools (`inspect_violation`, `show_counterexample`, `find_bottlenecks`) that only appear when failure evidence exists;
-- candidate tools that only appear while a candidate exists;
-- browser-local safety limits for imported model size and heavy analysis resources;
-- Level 0/1 regression coverage plus Level 2 ECMP, min-cut, N-1, worker, cancellation, stale-job, compute, and WebMCP eval tests;
-- a reproducible 50-node / 120-link / 60-demand / 120-contingency benchmark.
+- pinned **HiGHS 1.15.2 WebAssembly** solver loaded in a dedicated browser Worker;
+- traffic-allocation LP that minimizes maximum link utilization under per-demand flow conservation and link capacities;
+- discrete capacity-upgrade MILP minimizing declared upgrade cost under utilization/headroom, budget, baseline, and selected scenario constraints;
+- explicit solver status/proof, objective, gap when exposed, time limit, runtime, solver/version, model/scenario hashes, and problem hash;
+- time-limited runs never claim optimality unless the solver status proves it;
+- optimizer output is always a `CandidatePlan`, never an implicit mutation;
+- independent deterministic candidate verification that recomputes upgrade cost and replays selected scenarios;
+- verifier disagreement blocks the VERIFIED badge;
+- reversible candidate application with exact model-hash restoration for supported commands;
+- WebMCP optimizer tools (`optimize_capacity_plan`, `optimize_routing`, `verify_candidate`) registered only after the HiGHS worker probes successfully;
+- Level 0/1/2 regression coverage plus Level 3 LP, MILP, infeasibility, status, reversibility, verification, and WebMCP reference tests.
 
-SharedArrayBuffer and Rust/WASM are intentionally **not required** at Level 2. The recorded TypeScript benchmark is already acceptable for the target demo scale, so no unmeasured accelerator claim is made.
+Level 2 remains the resilience foundation: deterministic ECMP, bounded worker-parallel N-1, cancellation/progress, stale-result protection, counterexample replay, min-cut evidence, dynamic capability groups, and browser-local safety bounds.
+
+## Optimization semantics
+
+The capacity MILP is intentionally narrow and auditable. It chooses only from each link's declared `upgradeOptions`. For each selected baseline/failure/growth scenario, InfraTwin computes the deterministic routing loads and requires the chosen discrete capacity to keep each active link at or below the requested utilization target. Optional budget constraints are enforced in the same MILP.
+
+A missing route is reported as infeasible because capacity-only upgrades cannot repair connectivity. Scenario-level capacity overrides are rejected for optimization so capacity provenance remains unambiguous. A feasible time-limited incumbent may be shown as such, but it is never labeled minimum-cost without an optimal solver status.
+
+The independent verifier does not trust the optimizer objective. It reapplies the candidate to the original model, confirms every capacity is a declared discrete option, recomputes cost, checks budget, and reruns all selected scenarios. Only agreement across those checks produces VERIFIED.
 
 ## Routing semantics
 
 Bundled scenarios use `routingProfile.mode = "ecmp"`.
 
-For each demand, InfraTwin finds the shortest path cost by positive link weight and splits the demand equally across every equal-cost shortest path. Aggregate link load is the sum of each demand's fractional flow. The implementation exposes both a stable representative path and the complete per-link flow fractions used for capacity analysis.
+For each demand, InfraTwin finds the shortest path cost by positive link weight and splits the demand equally across every equal-cost shortest path. Aggregate link load is the sum of each demand's fractional flow. The implementation exposes both a stable representative path and the complete per-link flow fractions used for deterministic capacity/resilience analysis.
 
 `single-shortest-path` remains supported for Level 0 compatibility. ECMP projects require strictly positive weights so the equal-cost shortest-path graph remains acyclic and deterministic.
+
+The separate Level 3 traffic-allocation LP is an optimization reference: it may split commodity flow across any capacity-feasible topology path to minimize maximum utilization. It does not mutate the canonical routing profile.
 
 ## Bundled demos
 
@@ -40,11 +46,11 @@ Baseline PASS. Simulating CHI–DAL maintenance reroutes gold traffic across DEN
 
 ### Growth Wall
 
-Baseline east–west core is 60%. +40% growth pushes `G2` to 84%; first modeled service-target failure appears at 1.35×. The deterministic candidate raises `G2` to 22 Gbps and restores at least 20% headroom.
+Baseline east–west core is 60%. +40% growth pushes `G2` to 84%; first modeled service-target failure appears at 1.35×. The Level 3 MILP proves the minimum-cost declared plan is `G2` → 22 Gbps at cost 6 for an 80% utilization target.
 
 ### Resilience Gap
 
-Bounded N-1 ranks `R2` as the worst link failure. Counterexample replay reroutes premium traffic onto `R4`/`R5`, both reaching 110%. Min-cut evidence maps bottleneck edges directly to graph IDs. The existing two-link capacity candidate restores the modeled target.
+Bounded N-1 ranks `R2` as the worst link failure. Counterexample replay reroutes premium traffic onto `R4`/`R5`, both reaching 110%. The Level 3 MILP can optimize that selected failure and proves `R4`/`R5` → 14 Gbps at total cost 8 for an 80% target; the independent checker then replays the failure before VERIFIED is shown.
 
 ## Run
 
@@ -58,70 +64,34 @@ npm run build
 npm run dev
 ```
 
-Open `http://localhost:3000`.
+The web `dev` and `build` scripts copy `node_modules/highs/build/highs.wasm` into the app's public solver assets before Next.js starts. Open `http://localhost:3000`.
 
-Medium benchmark:
+Benchmarks:
 
 ```bash
 npm run benchmark:level2
+npm run benchmark:level3
 ```
 
-## Level 2 WebMCP capability states
+## WebMCP capability states
 
 InfraTwin feature-detects `document.modelContext` and registers semantic engineering tools against public application services, never DOM automation.
 
-Always-on core tools for a valid project:
+Always-on core tools for a valid project: `inspect_network`, `inspect_demands`, `simulate_change`, `run_capacity_analysis`, `propose_change`.
 
-- `inspect_network`
-- `inspect_demands`
-- `simulate_change`
-- `run_capacity_analysis`
-- `propose_change`
+When N-1 is available: `run_contingencies`.
 
-When the current network supports N-1 analysis:
+When current evidence is FAIL: `inspect_violation`, `show_counterexample`, `find_bottlenecks`.
 
-- `run_contingencies`
+When the HiGHS Worker is ready: `optimize_capacity_plan`, `optimize_routing`, `verify_candidate`.
 
-When current evidence is FAIL:
+When a candidate exists: `compare_candidate`, `apply_candidate`, `discard_candidate`.
 
-- `inspect_violation`
-- `show_counterexample`
-- `find_bottlenecks`
+Each capability group has its own registration-scoped `AbortController`; leaving the corresponding state revokes that group cleanly. Long resilience and optimizer work propagates cancellation to the browser execution boundary. Cancellation is surfaced as cancellation, never PASS or OPTIMAL.
 
-When a candidate exists:
+## Evidence contracts
 
-- `compare_candidate`
-- `apply_candidate`
-- `discard_candidate`
-
-Each capability group has its own registration-scoped `AbortController`; leaving the corresponding state revokes that group cleanly. `run_contingencies` propagates the execution `AbortSignal` into the worker/fallback runner. Cancellation is surfaced as cancellation, never PASS.
-
-## N-1 evidence contract
-
-Contingency results include:
-
-```text
-verdict
-modelHash
-scenarioHash
-solver id/version
-assumptions[]
-metrics {
-  totalEligibleScenarios
-  completedScenarios
-  workerCount
-  executionMode
-  status
-  worstLinkId
-  worstScore
-  ...
-}
-violations[]
-witnesses[]
-runtimeMs
-```
-
-Ranking is deterministic and explicitly defined as:
+Resilience results retain deterministic ranking, model/scenario hashes, assumptions, violations, witnesses, worker mode/count, progress status, and runtime. The N-1 ranking heuristic remains:
 
 ```text
 1000 * criticalUnsatisfiedGbps
@@ -130,20 +100,35 @@ Ranking is deterministic and explicitly defined as:
 + maxUtilizationPercent
 ```
 
-The score is a demo planning heuristic, not a universal reliability metric.
+Optimizer evidence adds:
+
+```text
+solver / solverVersion
+status / proof
+objectiveValue / mipGap
+timedOut / timeLimitMs / runtimeMs
+modelHash / scenarioHashes / problemHash
+selected upgrades
+candidate plan
+independent verification status + disagreement reasons
+```
+
+The N-1 score is a demo planning heuristic, not a universal reliability metric.
 
 ## Repository layout
 
 ```text
-apps/web                 Next.js workbench + real contingency Web Worker
-packages/model           canonical model, validation, scenario/candidate semantics
+apps/web                 Next.js workbench + contingency/optimizer Web Workers
+packages/model           canonical model, validation, reversible scenario/candidate semantics
 packages/graph-engine    shortest path, ECMP, utilization, components, min-cut
 packages/evidence        capacity/growth/N-1 orchestration, cancellation, evidence
+packages/optimizer       HiGHS LP/MILP formulation, diagnostics, candidate verification
 packages/webmcp          state-derived semantic tool registration + activity telemetry
 packages/scenarios       Maintenance Trap, Growth Wall, Resilience Gap, blank project
-benchmarks               reproducible Level 2 medium benchmark
-tests                    Level 0/1 regressions + Level 2 references/evals
-planning                 governing planning pack + implementation status/benchmark record
+scripts                  build/dev preparation for local WASM solver asset
+benchmarks               reproducible Level 2 and Level 3 benchmarks
+tests                    Level 0–3 reference and regression evaluations
+planning                 governing planning pack + implementation status/benchmark records
 ```
 
-See `planning/README.md` for planning precedence and `planning/LEVEL2_IMPLEMENTATION_STATUS.md` for the Level 2 gate mapping.
+See `planning/README.md`, `planning/LEVEL2_IMPLEMENTATION_STATUS.md`, and `planning/LEVEL3_IMPLEMENTATION_STATUS.md` for gate mapping and planning precedence.

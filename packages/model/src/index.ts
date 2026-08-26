@@ -265,7 +265,11 @@ export function applyModelCommand(project: NetworkProject, command: ModelCommand
       const linkId = String(command.args.linkId ?? '');
       const link = next.links.find((item) => item.id === linkId);
       if (!link) throw new Error(`Unknown link ${linkId}`);
-      link.available = Boolean(command.args.available);
+      if (!Object.prototype.hasOwnProperty.call(command.args, 'available')) throw new Error('set_link_availability requires args.available');
+      const available = command.args.available;
+      if (available === null) delete link.available;
+      else if (typeof available === 'boolean') link.available = available;
+      else throw new Error('available must be boolean or null for exact restoration');
       break;
     }
     case 'set_link_capacity': {
@@ -275,7 +279,18 @@ export function applyModelCommand(project: NetworkProject, command: ModelCommand
       if (!link) throw new Error(`Unknown link ${linkId}`);
       if (!Number.isFinite(capacityGbps) || capacityGbps <= 0) throw new Error('capacityGbps must be > 0');
       link.capacityGbps = capacityGbps;
-      if (link.upgradeOptions) link.upgradeOptions = link.upgradeOptions.filter((option) => option.capacityGbps > capacityGbps + 1e-9);
+      if (Object.prototype.hasOwnProperty.call(command.args, 'upgradeOptions')) {
+        const upgradeOptions = command.args.upgradeOptions;
+        if (upgradeOptions === null) delete link.upgradeOptions;
+        else if (Array.isArray(upgradeOptions)) {
+          link.upgradeOptions = upgradeOptions.map((option) => {
+            if (!isRecord(option) || !finiteNumber(option.capacityGbps) || !finiteNumber(option.cost)) throw new Error('upgradeOptions must contain numeric capacityGbps and cost');
+            return { capacityGbps: option.capacityGbps, cost: option.cost };
+          });
+        } else throw new Error('upgradeOptions must be an array or null for exact restoration');
+      } else if (link.upgradeOptions) {
+        link.upgradeOptions = link.upgradeOptions.filter((option) => option.capacityGbps > capacityGbps + 1e-9);
+      }
       break;
     }
     case 'set_demand_bandwidth': {
@@ -311,4 +326,65 @@ export function applyCandidatePlan(project: NetworkProject, candidate: Candidate
     throw new Error('Candidate is stale because the project changed after it was proposed.');
   }
   return candidate.commands.reduce((current, command) => applyModelCommand(current, command), project);
+}
+
+export function invertCandidatePlan(project: NetworkProject, candidate: CandidatePlan): CandidatePlan {
+  if (candidate.baseModelHash !== modelHash(project)) throw new Error('Candidate is stale because the project changed after it was proposed.');
+  let current = cloneProject(project);
+  const inverseCommands: ModelCommand[] = [];
+
+  candidate.commands.forEach((command, index) => {
+    let inverse: ModelCommand;
+    if (command.type === 'set_link_capacity') {
+      const linkId = String(command.args.linkId ?? '');
+      const link = current.links.find((item) => item.id === linkId);
+      if (!link) throw new Error(`Unknown link ${linkId}`);
+      inverse = {
+        id: `undo-${index}-${command.id}`,
+        type: 'set_link_capacity',
+        actor: 'human',
+        args: {
+          linkId,
+          capacityGbps: link.capacityGbps,
+          upgradeOptions: link.upgradeOptions ? link.upgradeOptions.map((option) => ({ ...option })) : null,
+        },
+        createdAt: new Date(0).toISOString(),
+      };
+    } else if (command.type === 'set_link_availability') {
+      const linkId = String(command.args.linkId ?? '');
+      const link = current.links.find((item) => item.id === linkId);
+      if (!link) throw new Error(`Unknown link ${linkId}`);
+      inverse = {
+        id: `undo-${index}-${command.id}`,
+        type: 'set_link_availability',
+        actor: 'human',
+        args: { linkId, available: Object.prototype.hasOwnProperty.call(link, 'available') ? link.available : null },
+        createdAt: new Date(0).toISOString(),
+      };
+    } else if (command.type === 'set_demand_bandwidth') {
+      const demandId = String(command.args.demandId ?? '');
+      const demand = current.demands.find((item) => item.id === demandId);
+      if (!demand) throw new Error(`Unknown demand ${demandId}`);
+      inverse = {
+        id: `undo-${index}-${command.id}`,
+        type: 'set_demand_bandwidth',
+        actor: 'human',
+        args: { demandId, bandwidthGbps: demand.bandwidthGbps },
+        createdAt: new Date(0).toISOString(),
+      };
+    } else {
+      throw new Error(`Candidate command ${command.type} is not reversibly supported.`);
+    }
+    inverseCommands.unshift(inverse);
+    current = applyModelCommand(current, command);
+  });
+
+  return {
+    id: `undo:${candidate.id}`,
+    name: `Undo ${candidate.name}`,
+    baseModelHash: modelHash(current),
+    commands: inverseCommands,
+    objective: { name: 'undo', value: 0 },
+    rationaleEvidenceIds: [...candidate.rationaleEvidenceIds],
+  };
 }

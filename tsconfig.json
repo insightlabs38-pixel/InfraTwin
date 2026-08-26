@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "lib": [
+      "DOM",
+      "DOM.Iterable",
+      "ES2022"
+    ],
     "allowJs": false,
     "skipLibCheck": true,
     "strict": true,
@@ -16,13 +20,33 @@
     "allowImportingTsExtensions": true,
     "baseUrl": ".",
     "paths": {
-      "@infratwin/model": ["packages/model/src/index.ts"],
-      "@infratwin/graph-engine": ["packages/graph-engine/src/index.ts"],
-      "@infratwin/evidence": ["packages/evidence/src/index.ts"],
-      "@infratwin/scenarios": ["packages/scenarios/src/index.ts"],
-      "@infratwin/webmcp": ["packages/webmcp/src/index.ts"]
+      "@infratwin/model": [
+        "packages/model/src/index.ts"
+      ],
+      "@infratwin/graph-engine": [
+        "packages/graph-engine/src/index.ts"
+      ],
+      "@infratwin/evidence": [
+        "packages/evidence/src/index.ts"
+      ],
+      "@infratwin/scenarios": [
+        "packages/scenarios/src/index.ts"
+      ],
+      "@infratwin/webmcp": [
+        "packages/webmcp/src/index.ts"
+      ],
+      "@infratwin/optimizer": [
+        "packages/optimizer/src/index.ts"
+      ]
     }
   },
-  "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts", "tests/**/*.ts"],
-  "exclude": ["node_modules"]
+  "include": [
+    "apps/**/*.ts",
+    "apps/**/*.tsx",
+    "packages/**/*.ts",
+    "tests/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }
