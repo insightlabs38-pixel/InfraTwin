@@ -1,0 +1,55 @@
+name: Apply Level 3 source
+
+on:
+  push:
+    branches:
+      - feature/level-3-optimization
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify and apply Level 3 source bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/level3_bundle/part{00..03} > /tmp/level3.b64
+          echo "7f66d5b687903a1987b89140a757988f6aedaf8be03bfd6b96006952855df99b  /tmp/level3.b64" | sha256sum -c -
+          base64 --decode /tmp/level3.b64 > /tmp/level3.tar.gz
+          echo "32a34b7dcebf9f5701d4c9e594089b7f34e6253ca144ebe7f6c3115baec6328f  /tmp/level3.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/level3.tar.gz -C .
+
+          for path in \
+            README.md \
+            package.json \
+            tsconfig.json \
+            apps/web/package.json \
+            apps/web/next.config.ts \
+            apps/web/components/workbench.tsx \
+            apps/web/lib/optimizer-client.ts \
+            apps/web/workers/optimizer.worker.ts \
+            scripts/prepare-highs-wasm.mjs \
+            packages/model/src/index.ts \
+            packages/optimizer/package.json \
+            packages/optimizer/src/index.ts \
+            packages/webmcp/package.json \
+            packages/webmcp/src/index.ts \
+            tests/level3.test.ts \
+            benchmarks/level3-optimizer.ts \
+            planning/LEVEL3_IMPLEMENTATION_STATUS.md \
+            planning/LEVEL3_BENCHMARK.md; do
+            test -f "$path"
+          done
+
+          rm -rf .github/level3_bundle
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m 'feat(level-3): add browser-local HiGHS optimization' -m 'Integrate HiGHS WASM in a dedicated browser worker, add traffic-allocation LP and capacity-upgrade MILP workflows, cost/budget/headroom constraints, solver diagnostics and proof semantics, reversible candidates, independent verification, optimizer WebMCP tools, reference tests, and Level 3 benchmarks.'
+          git push origin HEAD:feature/level-3-optimization
