@@ -18,7 +18,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat .github/level3_bundle/part{00..03} > /tmp/level3.b64
+          # The first 24kB were re-staged and individually hash-verified after
+          # the original transport showed a single-byte drift. Reuse the
+          # original tail only if the whole source bundle matches the local SHA.
+          cat .github/level3_bundle_v2/part{00..05} \
+              .github/level3_bundle/part02 \
+              .github/level3_bundle/part03 > /tmp/level3.b64
+          wc -c /tmp/level3.b64
+          sha256sum /tmp/level3.b64
           echo "7f66d5b687903a1987b89140a757988f6aedaf8be03bfd6b96006952855df99b  /tmp/level3.b64" | sha256sum -c -
           base64 --decode /tmp/level3.b64 > /tmp/level3.tar.gz
           echo "32a34b7dcebf9f5701d4c9e594089b7f34e6253ca144ebe7f6c3115baec6328f  /tmp/level3.tar.gz" | sha256sum -c -
@@ -46,7 +53,7 @@ jobs:
             test -f "$path"
           done
 
-          rm -rf .github/level3_bundle
+          rm -rf .github/level3_bundle .github/level3_bundle_v2
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
