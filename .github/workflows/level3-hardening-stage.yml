@@ -25,6 +25,7 @@ jobs:
           python3 scripts/level3-hardening-core.py
           python3 scripts/level3-hardening-ui.py
           python3 scripts/level3-hardening-test-fix.py
+          python3 scripts/level3-hardening-type-fix.py
 
       - name: Wire Playwright, strict includes, CI gate, docs, and ignores
         shell: bash
@@ -33,6 +34,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import json
+          import textwrap
 
           package_path = Path('package.json')
           package = json.loads(package_path.read_text())
@@ -71,7 +73,6 @@ jobs:
                 - run: npm run benchmark:level2
                 - run: npm run benchmark:level3
           '''
-          import textwrap
           Path('.github/workflows/ci.yml').write_text(textwrap.dedent(ci))
 
           gitignore_path = Path('.gitignore')
@@ -145,6 +146,7 @@ jobs:
             packages/webmcp/src/index.ts \
             tests/level1.test.ts \
             tests/level2.test.ts \
+            tests/level3-hardening.test.ts \
             apps/web/components/workbench.tsx \
             apps/web/app/globals.css
           git diff --cached --quiet && exit 0
