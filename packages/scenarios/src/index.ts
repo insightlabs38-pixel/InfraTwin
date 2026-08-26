@@ -46,7 +46,7 @@ const maintenanceTrap: NetworkProject = {
     { id: 'D3', name: 'Denver analytics', source: 'DEN', target: 'NYC', bandwidthGbps: 4, serviceClassId: 'silver' },
   ],
   serviceClasses,
-  routingProfile: { mode: 'single-shortest-path' },
+  routingProfile: { mode: 'ecmp' },
   metadata: {
     description: 'Healthy baseline. Taking CHI–DAL out for maintenance reroutes gold traffic through DEN–ATL and overloads the hidden L3 bottleneck.',
     suggestedPrompt: 'Can I take the Chicago–Dallas link down for maintenance without violating critical-service constraints? Don’t apply any changes.',
@@ -87,7 +87,7 @@ const growthWall: NetworkProject = {
     { id: 'GD3', name: 'Atlanta batch', source: 'ATL', target: 'DEN', bandwidthGbps: 3, serviceClassId: 'silver' },
   ],
   serviceClasses,
-  routingProfile: { mode: 'single-shortest-path' },
+  routingProfile: { mode: 'ecmp' },
   metadata: {
     description: 'The east–west core runs at 60% today. Coordinated forecast growth crosses the gold 80% planning target before +40%.',
     suggestedPrompt: 'If east-to-west demand grows 40%, what becomes the first bottleneck, and what is the cheapest upgrade plan that keeps at least 20% headroom?',
@@ -119,7 +119,7 @@ const resilienceGap: NetworkProject = {
     { id: 'RD2', name: 'Southern API', source: 'ATL', target: 'SEA', bandwidthGbps: 4, serviceClassId: 'silver' },
   ],
   serviceClasses,
-  routingProfile: { mode: 'single-shortest-path' },
+  routingProfile: { mode: 'ecmp' },
   metadata: {
     description: 'The topology looks redundant, but failure of CHI–SEA reroutes premium traffic onto a 10 Gbps southern corridor and overloads both links.',
     suggestedPrompt: 'Find the worst single-link failure and tell me exactly what it breaks. Then propose the cheapest mitigation, but don’t apply it.',
@@ -134,7 +134,7 @@ const blank: NetworkProject = {
   links: [],
   demands: [],
   serviceClasses: [],
-  routingProfile: { mode: 'single-shortest-path' },
+  routingProfile: { mode: 'ecmp' },
   metadata: { description: 'A valid empty project for manual import or construction.', suggestedPrompt: 'Import a project JSON file to begin.' },
 };
 

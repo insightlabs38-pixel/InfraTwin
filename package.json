@@ -3,13 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "dev": "npm run dev --workspace @infratwin/web",
     "build": "npm run build --workspace @infratwin/web",
     "start": "npm run start --workspace @infratwin/web",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --experimental-strip-types --test tests/*.test.ts"
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "benchmark:level2": "node --experimental-strip-types benchmarks/level2-medium.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -17,5 +21,7 @@
     "@types/react-dom": "^19.0.0",
     "typescript": "^5.8.3"
   },
-  "engines": { "node": ">=22" }
+  "engines": {
+    "node": ">=22"
+  }
 }
