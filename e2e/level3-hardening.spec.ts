@@ -1,14 +1,31 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type ConsoleMessage, type Page } from '@playwright/test';
 import { readFile, writeFile } from 'node:fs/promises';
 
 async function openWorkbench(page: Page) {
+  const hydrationErrors: string[] = [];
+  const onPageError = (error: Error) => {
+    if (/hydration failed/i.test(error.message)) hydrationErrors.push(error.message);
+  };
+  const onConsole = (message: ConsoleMessage) => {
+    if (message.type() === 'error' && /hydration failed/i.test(message.text())) hydrationErrors.push(message.text());
+  };
+  page.on('pageerror', onPageError);
+  page.on('console', onConsole);
   await page.goto('/');
   await expect(page.getByTestId('topology-canvas')).toBeVisible();
   await expect(page.getByTestId('analysis-journey')).toBeVisible();
+  await page.waitForTimeout(150);
+  expect(hydrationErrors).toEqual([]);
+  page.off('pageerror', onPageError);
+  page.off('console', onConsole);
 }
 
 async function waitForOptimizer(page: Page) {
   await expect(page.getByTestId('optimizer-status')).toContainText(/ready|HiGHS WASM/i, { timeout: 30_000 });
+}
+
+function modelIdentity(value: string | null): string {
+  return (value ?? '').split(' / ')[0].trim();
 }
 
 function largeCancellationProject() {
@@ -60,11 +77,14 @@ test('Growth Wall: +40% → minimum-cost G2 candidate → verify → apply → e
   await page.getByTestId('scenario-growth-wall').click();
   await expect(page.getByTestId('verdict')).toHaveText('PASS');
   const originalSemanticIdentity = await page.getByTestId('semantic-model-hash').textContent();
+  const originalModelIdentity = modelIdentity(originalSemanticIdentity);
 
   await page.getByTestId('run-growth').click();
   await expect(page.getByTestId('verdict')).toHaveText('FAIL');
   await expect(page.getByTestId('growth-evidence')).toContainText(/G2/);
   await expect(page.getByTestId('growth-evidence')).toContainText(/1.35/);
+  const growthScenarioIdentity = await page.getByTestId('semantic-model-hash').textContent();
+  expect(modelIdentity(growthScenarioIdentity)).toBe(originalModelIdentity);
 
   await waitForOptimizer(page);
   await page.getByTestId('run-optimizer').click();
@@ -75,13 +95,16 @@ test('Growth Wall: +40% → minimum-cost G2 candidate → verify → apply → e
 
   await page.getByTestId('verify-candidate').click();
   await expect(page.getByTestId('candidate-verification')).toContainText('VERIFIED', { timeout: 20_000 });
-  await expect(page.getByTestId('semantic-model-hash')).toHaveText(originalSemanticIdentity ?? '');
+  await expect(page.getByTestId('semantic-model-hash')).toHaveText(growthScenarioIdentity ?? '');
 
   await page.getByTestId('apply-candidate').click();
   await expect(page.getByTestId('undo-candidate')).toBeVisible();
-  await expect(page.getByTestId('semantic-model-hash')).not.toHaveText(originalSemanticIdentity ?? '');
+  const appliedIdentity = await page.getByTestId('semantic-model-hash').textContent();
+  expect(modelIdentity(appliedIdentity)).not.toBe(originalModelIdentity);
+
   await page.getByTestId('undo-candidate').click();
-  await expect(page.getByTestId('semantic-model-hash')).toHaveText(originalSemanticIdentity ?? '');
+  await expect(page.getByTestId('semantic-model-hash')).toHaveText(growthScenarioIdentity ?? '');
+  expect(modelIdentity(await page.getByTestId('semantic-model-hash').textContent())).toBe(originalModelIdentity);
 });
 
 test('Resilience Gap: rank R2 → explicit replay → R4/R5 optimizer candidate stays unapplied until approval', async ({ page }) => {
@@ -101,7 +124,7 @@ test('Resilience Gap: rank R2 → explicit replay → R4/R5 optimizer candidate 
   await expect(page.getByTestId('evidence-panel')).toContainText('R4');
   await expect(page.getByTestId('evidence-panel')).toContainText('R5');
   const replayIdentity = await page.getByTestId('semantic-model-hash').textContent();
-  expect(replayIdentity?.split(' / ')[0]).toBe(baselineSemanticIdentity?.split(' / ')[0]);
+  expect(modelIdentity(replayIdentity)).toBe(modelIdentity(baselineSemanticIdentity));
 
   await waitForOptimizer(page);
   await page.getByTestId('run-optimizer').click();
