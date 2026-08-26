@@ -20,8 +20,8 @@ import {
   runLinkContingenciesAsync,
   runSingleLinkContingency,
   type ContingencyWorkerLike,
-  type WorkerRequest,
-  type WorkerResponse,
+  type ContingencyWorkerRequest,
+  type ContingencyWorkerResponse,
 } from '../packages/evidence/src/index.ts';
 import { proposeCapacityMitigation } from '../packages/evidence/src/index.ts';
 import { optimizeCapacityPlan, optimizeRouting, verifyCapacityCandidate, type CapacityPlanRequirements } from '../packages/optimizer/src/index.ts';
@@ -192,15 +192,17 @@ test('seeded differential min-cut agrees with exhaustive cut enumeration includi
 });
 
 class InlineWorker implements ContingencyWorkerLike {
-  onmessage: ((event: { data: WorkerResponse }) => void) | null = null;
-  onerror: ((event: { message?: string }) => void) | null = null;
+  onmessage: ((event: MessageEvent<ContingencyWorkerResponse>) => void) | null = null;
+  onerror: ((event: ErrorEvent) => void) | null = null;
   terminated = false;
-  postMessage(message: WorkerRequest): void {
+  postMessage(message: ContingencyWorkerRequest): void {
     queueMicrotask(() => {
       try {
-        const item = runSingleLinkContingency(message.project, message.basePatch, message.linkId, message.index);
-        this.onmessage?.({ data: { type: 'result', jobId: message.jobId, item } });
-      } catch (error) { this.onmessage?.({ data: { type: 'error', jobId: message.jobId, error: error instanceof Error ? error.message : String(error) } }); }
+        const contingency = runSingleLinkContingency(message.project, message.linkId, message.basePatch);
+        this.onmessage?.({ data: { taskId: message.taskId, ok: true, contingency } } as MessageEvent<ContingencyWorkerResponse>);
+      } catch (error) {
+        this.onmessage?.({ data: { taskId: message.taskId, ok: false, error: error instanceof Error ? error.message : String(error) } } as MessageEvent<ContingencyWorkerResponse>);
+      }
     });
   }
   terminate(): void { this.terminated = true; }
@@ -311,7 +313,7 @@ function independentFeasible(project: NetworkProject, capacities: Map<string, nu
     for (const link of snapshot.links) {
       if (link.available === false) continue;
       const capacity = capacities.get(link.id) ?? link.capacityGbps;
-      if ((loads.get(link.id) ?? 0) > capacity * (requirements.targetUtilizationPct / 100) + 1e-8) return false;
+      if ((loads.get(link.id) ?? 0) > capacity * ((requirements.targetUtilizationPct ?? 80) / 100) + 1e-8) return false;
     }
   }
   return true;
@@ -340,8 +342,12 @@ test('HiGHS capacity MILP matches independent exhaustive upgrade enumeration on 
     assert.equal(solved.diagnostics.proof === 'optimal', brute.feasible, `feasibility/proof seed=${seed}; status=${solved.diagnostics.status}`);
     if (brute.feasible) {
       assertClose(solved.diagnostics.objectiveValue ?? NaN, brute.cost ?? NaN, seed, 'minimum upgrade cost', 1e-7);
-      assert.ok(solved.candidate, `candidate seed=${seed}`);
-      assert.equal(verifyCapacityCandidate(project, solved.candidate!, requirements).status, 'verified', `candidate direct verification seed=${seed}`);
+      if ((brute.cost ?? 0) > 0) {
+        assert.ok(solved.candidate, `candidate seed=${seed}`);
+        assert.equal(verifyCapacityCandidate(project, solved.candidate!, requirements).status, 'verified', `candidate direct verification seed=${seed}`);
+      } else {
+        assert.equal(solved.selectedUpgrades.length, 0, `zero-cost/no-change optimum seed=${seed}`);
+      }
     } else {
       assert.equal(solved.candidate, null, `no candidate on infeasible case seed=${seed}`);
     }
@@ -421,5 +427,8 @@ test('property invariants: scenario purity, candidate purity/reversibility, canc
   assert.equal(cancelled.status, 'cancelled');
 
   const staleProject = cloneProject(overloaded); staleProject.demands[0].bandwidthGbps += 1;
-  assert.throws(() => verifyCapacityCandidate(staleProject, candidate!, { targetUtilizationPct: 100, includeBaseline: true, scenarioPatches: [] }), /stale/i);
+  const staleVerification = verifyCapacityCandidate(staleProject, candidate!, { targetUtilizationPct: 100, includeBaseline: true, scenarioPatches: [] });
+  assert.equal(staleVerification.status, 'disagreement');
+  assert.ok(staleVerification.violations.some((message) => /baseModelHash|stale|project changed/i.test(message)));
+  assert.notEqual(staleVerification.status, 'verified');
 });
