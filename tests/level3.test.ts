@@ -144,6 +144,24 @@ test('optimizer candidates are reversible back to the exact original model hash'
   assert.equal(modelHash(restored), modelHash(project));
 });
 
+test('inverse preserves an originally absent optional availability property', () => {
+  const project = loadGrowthWall();
+  const linkId = project.links[0].id;
+  delete project.links[0].available;
+  const candidate: CandidatePlan = {
+    id: 'candidate:availability-round-trip',
+    name: 'Availability round trip',
+    baseModelHash: modelHash(project),
+    commands: [{ id: 'cmd-disable', type: 'set_link_availability', actor: 'agent', args: { linkId, available: false }, createdAt: new Date(0).toISOString() }],
+    objective: { name: 'test', value: 0 },
+    rationaleEvidenceIds: [],
+  };
+  const undo = invertCandidatePlan(project, candidate);
+  const restored = applyCandidatePlan(applyCandidatePlan(project, candidate), undo);
+  assert.equal(modelHash(restored), modelHash(project));
+  assert.equal(Object.prototype.hasOwnProperty.call(restored.links.find((link) => link.id === linkId)!, 'available'), false);
+});
+
 test('optimizer WebMCP group exposes candidate-only solve, routing LP, and independent verification', async () => {
   let project = loadGrowthWall();
   let patch: ScenarioPatch | null = growthPatch();
@@ -179,14 +197,14 @@ test('optimizer WebMCP group exposes candidate-only solve, routing LP, and indep
   assert.equal(tools.get('verify_candidate')?.annotations?.readOnlyHint, true);
 
   await tools.get('optimize_capacity_plan')!.execute({ targetUtilizationPct: 80 });
-  assert.equal(optimization?.diagnostics.proof, 'optimal');
+  assert.equal((optimization as CapacityOptimizationResult | null)?.diagnostics.proof, 'optimal');
   assert.ok(candidate);
   assert.equal(modelHash(project), modelHash(loadGrowthWall()), 'optimizer tool must not mutate canonical project');
 
   const routeResult = await tools.get('optimize_routing')!.execute({}) as TrafficAllocationResult;
   assert.equal(routeResult.diagnostics.proof, 'optimal');
   await tools.get('verify_candidate')!.execute({ targetUtilizationPct: 80 });
-  assert.equal(verification?.status, 'verified');
+  assert.equal((verification as CandidateVerification | null)?.status, 'verified');
   assert.ok(activities.some((event) => event.tool === 'optimize_capacity_plan' && event.status === 'success'));
 
   dispose();
