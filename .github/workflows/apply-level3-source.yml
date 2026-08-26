@@ -14,49 +14,36 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Verify and apply Level 3 source bundle
+      - name: Diagnose remaining Level 3 transport tail
         shell: bash
         run: |
           set -euo pipefail
-          # The first 24kB were re-staged and individually hash-verified after
-          # the original transport showed a single-byte drift. Reuse the
-          # original tail only if the whole source bundle matches the local SHA.
           cat .github/level3_bundle_v2/part{00..05} \
               .github/level3_bundle/part02 \
               .github/level3_bundle/part03 > /tmp/level3.b64
+
+          echo 'candidate:'
           wc -c /tmp/level3.b64
           sha256sum /tmp/level3.b64
-          echo "7f66d5b687903a1987b89140a757988f6aedaf8be03bfd6b96006952855df99b  /tmp/level3.b64" | sha256sum -c -
+
+          echo 'v1 part02 4k chunks:'
+          split -b 4000 -d -a 2 .github/level3_bundle/part02 /tmp/p2-
+          sha256sum /tmp/p2-*
+          echo 'v2 part06:'
+          sha256sum .github/level3_bundle_v2/part06
+          cmp -s /tmp/p2-00 .github/level3_bundle_v2/part06 && echo 'part02 chunk0 matches verified v2 part06' || echo 'part02 chunk0 differs from verified v2 part06'
+
+          echo 'v1 part03 chunks:'
+          split -b 4000 -d -a 2 .github/level3_bundle/part03 /tmp/p3-
+          wc -c /tmp/p3-*
+          sha256sum /tmp/p3-*
+
+          echo 'decoded candidate:'
           base64 --decode /tmp/level3.b64 > /tmp/level3.tar.gz
-          echo "32a34b7dcebf9f5701d4c9e594089b7f34e6253ca144ebe7f6c3115baec6328f  /tmp/level3.tar.gz" | sha256sum -c -
-          tar -xzf /tmp/level3.tar.gz -C .
-
-          for path in \
-            README.md \
-            package.json \
-            tsconfig.json \
-            apps/web/package.json \
-            apps/web/next.config.ts \
-            apps/web/components/workbench.tsx \
-            apps/web/lib/optimizer-client.ts \
-            apps/web/workers/optimizer.worker.ts \
-            scripts/prepare-highs-wasm.mjs \
-            packages/model/src/index.ts \
-            packages/optimizer/package.json \
-            packages/optimizer/src/index.ts \
-            packages/webmcp/package.json \
-            packages/webmcp/src/index.ts \
-            tests/level3.test.ts \
-            benchmarks/level3-optimizer.ts \
-            planning/LEVEL3_IMPLEMENTATION_STATUS.md \
-            planning/LEVEL3_BENCHMARK.md; do
-            test -f "$path"
-          done
-
-          rm -rf .github/level3_bundle .github/level3_bundle_v2
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git diff --cached --quiet && exit 0
-          git commit -m 'feat(level-3): add browser-local HiGHS optimization' -m 'Integrate HiGHS WASM in a dedicated browser worker, add traffic-allocation LP and capacity-upgrade MILP workflows, cost/budget/headroom constraints, solver diagnostics and proof semantics, reversible candidates, independent verification, optimizer WebMCP tools, reference tests, and Level 3 benchmarks.'
-          git push origin HEAD:feature/level-3-optimization
+          wc -c /tmp/level3.tar.gz
+          sha256sum /tmp/level3.tar.gz
+          if gzip -t /tmp/level3.tar.gz; then
+            echo 'gzip integrity OK'
+          else
+            echo 'gzip integrity FAILED'
+          fi
