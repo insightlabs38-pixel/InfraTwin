@@ -268,7 +268,7 @@ test('WebMCP contingency execution honors AbortSignal and records cancellation a
   const dispose = await registerResilienceTools(harness.context, harness.services);
   const controller = new AbortController();
   controller.abort();
-  await assert.rejects(() => harness.tools.get('run_contingencies')!.execute({}, { signal: controller.signal }), (error: unknown) => error instanceof Error && error.name === 'AbortError');
+  await assert.rejects(async () => await harness.tools.get('run_contingencies')!.execute({}, { signal: controller.signal }), (error: unknown) => error instanceof Error && error.name === 'AbortError');
   assert.equal(harness.activities.at(-1)?.tool, 'run_contingencies');
   assert.equal(harness.activities.at(-1)?.status, 'cancelled');
   dispose();
