@@ -26,6 +26,7 @@ jobs:
           python3 scripts/level3-hardening-ui.py
           python3 scripts/level3-hardening-test-fix.py
           python3 scripts/level3-hardening-type-fix.py
+          python3 scripts/level3-hardening-browser-fix.py
 
       - name: Wire Playwright, strict includes, CI gate, docs, and ignores
         shell: bash
@@ -122,6 +123,17 @@ jobs:
 
       - name: Browser E2E safety net
         run: npm run test:e2e
+
+      - name: Upload browser inspection artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: level3-browser-inspection
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Level 2 benchmark
         run: npm run benchmark:level2
