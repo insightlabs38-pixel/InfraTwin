@@ -1,0 +1,21 @@
+{
+  "name": "infratwin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "npm run dev --workspace @infratwin/web",
+    "build": "npm run build --workspace @infratwin/web",
+    "start": "npm run start --workspace @infratwin/web",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --experimental-strip-types --test tests/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.8.3"
+  },
+  "engines": { "node": ">=22" }
+}

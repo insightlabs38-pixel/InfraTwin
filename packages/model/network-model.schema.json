@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infratwin.local/schema/network-model.schema.json",
+  "title": "InfraTwin Network Project",
+  "type": "object",
+  "required": ["schemaVersion", "id", "name", "nodes", "links", "demands", "serviceClasses"],
+  "properties": {
+    "schemaVersion": { "type": "string", "const": "0.1" },
+    "id": { "type": "string", "minLength": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "nodes": { "type": "array", "items": { "$ref": "#/$defs/node" } },
+    "links": { "type": "array", "items": { "$ref": "#/$defs/link" } },
+    "demands": { "type": "array", "items": { "$ref": "#/$defs/demand" } },
+    "serviceClasses": { "type": "array", "items": { "$ref": "#/$defs/serviceClass" } },
+    "routingProfile": { "$ref": "#/$defs/routingProfile" },
+    "metadata": { "type": "object", "additionalProperties": true }
+  },
+  "$defs": {
+    "node": { "type": "object", "required": ["id", "name"], "properties": { "id": { "type": "string", "minLength": 1 }, "name": { "type": "string", "minLength": 1 }, "region": { "type": "string" }, "type": { "type": "string" }, "available": { "type": "boolean", "default": true }, "x": { "type": "number" }, "y": { "type": "number" } }, "additionalProperties": false },
+    "link": { "type": "object", "required": ["id", "source", "target", "capacityGbps", "weight"], "properties": { "id": { "type": "string", "minLength": 1 }, "source": { "type": "string", "minLength": 1 }, "target": { "type": "string", "minLength": 1 }, "bidirectional": { "type": "boolean", "default": true }, "capacityGbps": { "type": "number", "exclusiveMinimum": 0 }, "latencyMs": { "type": "number", "minimum": 0 }, "weight": { "type": "number", "minimum": 0 }, "available": { "type": "boolean", "default": true }, "upgradeOptions": { "type": "array", "items": { "type": "object", "required": ["capacityGbps", "cost"], "properties": { "capacityGbps": { "type": "number", "exclusiveMinimum": 0 }, "cost": { "type": "number", "minimum": 0 } }, "additionalProperties": false } } }, "additionalProperties": false },
+    "demand": { "type": "object", "required": ["id", "source", "target", "bandwidthGbps", "serviceClassId"], "properties": { "id": { "type": "string", "minLength": 1 }, "name": { "type": "string" }, "source": { "type": "string", "minLength": 1 }, "target": { "type": "string", "minLength": 1 }, "bandwidthGbps": { "type": "number", "minimum": 0 }, "serviceClassId": { "type": "string", "minLength": 1 } }, "additionalProperties": false },
+    "serviceClass": { "type": "object", "required": ["id", "name", "priority", "maxUtilizationPct"], "properties": { "id": { "type": "string", "minLength": 1 }, "name": { "type": "string", "minLength": 1 }, "priority": { "type": "integer", "minimum": 0 }, "maxUtilizationPct": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 }, "allowShedding": { "type": "boolean", "default": false } }, "additionalProperties": false },
+    "routingProfile": { "type": "object", "properties": { "mode": { "type": "string", "enum": ["single-shortest-path", "ecmp"] } }, "required": ["mode"], "additionalProperties": false }
+  },
+  "additionalProperties": false
+}
