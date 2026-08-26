@@ -14,36 +14,42 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Diagnose remaining Level 3 transport tail
+      - name: Repair and verify Level 3 source archive
         shell: bash
         run: |
           set -euo pipefail
           cat .github/level3_bundle_v2/part{00..05} \
               .github/level3_bundle/part02 \
               .github/level3_bundle/part03 > /tmp/level3.b64
-
-          echo 'candidate:'
-          wc -c /tmp/level3.b64
-          sha256sum /tmp/level3.b64
-
-          echo 'v1 part02 4k chunks:'
-          split -b 4000 -d -a 2 .github/level3_bundle/part02 /tmp/p2-
-          sha256sum /tmp/p2-*
-          echo 'v2 part06:'
-          sha256sum .github/level3_bundle_v2/part06
-          cmp -s /tmp/p2-00 .github/level3_bundle_v2/part06 && echo 'part02 chunk0 matches verified v2 part06' || echo 'part02 chunk0 differs from verified v2 part06'
-
-          echo 'v1 part03 chunks:'
-          split -b 4000 -d -a 2 .github/level3_bundle/part03 /tmp/p3-
-          wc -c /tmp/p3-*
-          sha256sum /tmp/p3-*
-
-          echo 'decoded candidate:'
           base64 --decode /tmp/level3.b64 > /tmp/level3.tar.gz
-          wc -c /tmp/level3.tar.gz
-          sha256sum /tmp/level3.tar.gz
-          if gzip -t /tmp/level3.tar.gz; then
-            echo 'gzip integrity OK'
-          else
-            echo 'gzip integrity FAILED'
-          fi
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct, zlib, hashlib, base64
+          p = Path('/tmp/level3.tar.gz')
+          data = bytearray(p.read_bytes())
+          print('gzip header', data[:10].hex(), 'flags', data[3])
+          if data[:2] != b'\x1f\x8b' or data[2] != 8 or data[3] != 0:
+              raise SystemExit('unexpected gzip header; refusing trailer repair')
+          raw = bytes(data[10:-8])
+          plain = zlib.decompress(raw, -15)
+          crc = zlib.crc32(plain) & 0xffffffff
+          isize = len(plain) & 0xffffffff
+          old_crc, old_size = struct.unpack('<II', data[-8:])
+          print('old trailer', hex(old_crc), old_size)
+          print('computed trailer', hex(crc), isize)
+          data[-8:] = struct.pack('<II', crc, isize)
+          repaired = bytes(data)
+          Path('/tmp/level3.repaired.tar.gz').write_bytes(repaired)
+          print('repaired gzip sha256', hashlib.sha256(repaired).hexdigest())
+          encoded = base64.b64encode(repaired)
+          print('repaired base64 sha256', hashlib.sha256(encoded).hexdigest(), 'len', len(encoded))
+          if hashlib.sha256(repaired).hexdigest() != '32a34b7dcebf9f5701d4c9e594089b7f34e6253ca144ebe7f6c3115baec6328f':
+              raise SystemExit('repaired gzip does not match expected source archive')
+          if hashlib.sha256(encoded).hexdigest() != '7f66d5b687903a1987b89140a757988f6aedaf8be03bfd6b96006952855df99b':
+              raise SystemExit('repaired base64 does not match expected source bundle')
+          Path('/tmp/level3.tar').write_bytes(plain)
+          PY
+
+          gzip -t /tmp/level3.repaired.tar.gz
+          tar -tf /tmp/level3.tar | sed -n '1,80p'
