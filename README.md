@@ -132,3 +132,14 @@ planning                 governing planning pack + implementation status/benchma
 ```
 
 See `planning/README.md`, `planning/LEVEL2_IMPLEMENTATION_STATUS.md`, and `planning/LEVEL3_IMPLEMENTATION_STATUS.md` for gate mapping and planning precedence.
+
+
+## Level 3 hardening
+
+The current Level 0–3 product is frozen for a reliability and judge-facing product-quality pass before any Level 4 work. The workbench now separates the primary engineering journey from advanced protocol/solver diagnostics, routes human semantic edits through validated `ModelCommand` application, and uses a semantic SHA-256 model identity that excludes layout-only node coordinates and presentation metadata.
+
+WebMCP analysis contracts are state-honest: `simulate_change` is read-only, N-1 ranking does not silently replay a failure, and `show_counterexample` is only registered when a valid ranking exists. Model-derived tool output is marked as untrusted content where imported/user-controlled labels may be present.
+
+Browser regression coverage is available with `npm run test:e2e` and covers the bundled Maintenance Trap, Growth Wall, and Resilience Gap workflows plus cancellation, reset/switch stale-result protection, import/export, HiGHS worker loading, and responsive-layout smoke checks.
+
+See `planning/LEVEL3_HARDENING_STATUS.md` for the exact hardening scope and remaining limitations. The next stage after this gate is a dedicated adversarial/fuzz/evaluation pass; this hardening pass does not claim that adversarial testing is complete.

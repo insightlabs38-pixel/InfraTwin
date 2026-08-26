@@ -14,13 +14,15 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "benchmark:level2": "node --experimental-strip-types benchmarks/level2-medium.ts",
-    "benchmark:level3": "node --experimental-strip-types benchmarks/level3-optimizer.ts"
+    "benchmark:level3": "node --experimental-strip-types benchmarks/level3-optimizer.ts",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "@playwright/test": "1.62.1"
   },
   "engines": {
     "node": ">=22"

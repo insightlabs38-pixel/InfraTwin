@@ -190,7 +190,7 @@ test('optimizer WebMCP publication is rejected when the shared semantic model ch
     publishOptimizationResult: () => { published = true; },
   };
   const dispose = await registerOptimizerTools(harness.context, services);
-  await assert.rejects(() => harness.tools.get('optimize_capacity_plan')!.execute({ targetUtilizationPct: 80 }), /stale/i);
+  await assert.rejects(async () => { await harness.tools.get('optimize_capacity_plan')!.execute({ targetUtilizationPct: 80 }); }, /stale/i);
   assert.equal(published, false);
   assert.equal(candidate, null);
   dispose();

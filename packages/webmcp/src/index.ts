@@ -102,7 +102,8 @@ export interface InfraTwinToolServices {
 
 export const CORE_TOOL_NAMES = ['inspect_network', 'inspect_demands', 'simulate_change', 'run_capacity_analysis', 'propose_change'] as const;
 export const RESILIENCE_TOOL_NAMES = ['run_contingencies'] as const;
-export const VIOLATION_TOOL_NAMES = ['inspect_violation', 'show_counterexample', 'find_bottlenecks'] as const;
+export const VIOLATION_TOOL_NAMES = ['inspect_violation', 'find_bottlenecks'] as const;
+export const COUNTEREXAMPLE_TOOL_NAMES = ['show_counterexample'] as const;
 export const CANDIDATE_TOOL_NAMES = ['compare_candidate', 'apply_candidate', 'discard_candidate'] as const;
 export const OPTIMIZER_TOOL_NAMES = ['optimize_capacity_plan', 'optimize_routing', 'verify_candidate'] as const;
 export const BASE_TOOL_NAMES = [...CORE_TOOL_NAMES, ...RESILIENCE_TOOL_NAMES] as const;
@@ -229,7 +230,7 @@ function buildSimulationPatch(project: NetworkProject, input: Record<string, unk
     : [];
 
   return {
-    id: `webmcp-simulation-${Date.now()}`,
+    id: 'webmcp-simulation',
     name: typeof input.name === 'string' && input.name.trim() ? input.name.trim() : 'Agent what-if simulation',
     disabledNodeIds: [], disabledLinkIds, demandMultipliers, addedDemands: [], linkCapacityOverrides,
   };
@@ -259,7 +260,7 @@ export async function registerCoreTools(context: ModelContextLike, services: Inf
     {
       name: 'inspect_network', title: 'Inspect current network',
       description: 'Reads the current InfraTwin project plus active scenario and returns deterministic topology/capacity state with hashes. It does not modify project state.',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true },
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true, untrustedContentHint: true },
       execute: activityWrapper(services, 'inspect_network', true, (result) => {
         const summary = result as InspectNetworkSummary; return `${summary.verdict} · ${summary.routingMode} · peak ${summary.peakUtilizationPct}%`;
       }, async () => inspectNetwork(services.getProject(), services.getActiveScenario())),
@@ -267,7 +268,7 @@ export async function registerCoreTools(context: ModelContextLike, services: Inf
     {
       name: 'inspect_demands', title: 'Inspect demands and ECMP routes',
       description: 'Reads demands, service classes, current routed link sets, and equal-cost path counts from the shared model/scenario state.',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true },
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true, untrustedContentHint: true },
       execute: activityWrapper(services, 'inspect_demands', true, (result) => {
         const summary = result as InspectDemandsSummary; return `${summary.demandCount} demands · ${summary.totalDemandGbps} Gbps`;
       }, async () => inspectDemands(services.getProject(), services.getActiveScenario())),
@@ -281,20 +282,21 @@ export async function registerCoreTools(context: ModelContextLike, services: Inf
           demandMultipliers: { type: 'array', items: { type: 'object', properties: { demandId: { type: 'string' }, multiplier: { type: 'number', minimum: 0 } }, required: ['demandId', 'multiplier'], additionalProperties: false } },
           linkCapacityOverrides: { type: 'array', items: { type: 'object', properties: { linkId: { type: 'string' }, capacityGbps: { type: 'number', exclusiveMinimum: 0 } }, required: ['linkId', 'capacityGbps'], additionalProperties: false } },
         }, additionalProperties: false,
-      }, annotations: { readOnlyHint: true },
+      }, annotations: { readOnlyHint: true, untrustedContentHint: true },
       execute: activityWrapper(services, 'simulate_change', true, (result) => {
         const analysis = result as CapacityAnalysis; return `${analysis.result.verdict} · peak ${analysis.result.metrics.peakUtilizationPct}% · ${analysis.result.violations.length} violations`;
       }, async (input) => {
         const project = services.getProject();
         const patch = buildSimulationPatch(project, input);
-        const analysis = runScenarioCapacityAnalysis(project, patch);
-        services.setActiveScenario(patch); services.publishCapacityAnalysis(analysis); return analysis;
+        // A read-only simulation never changes the active shared scenario or canonical project.
+        // The caller can explicitly replay a scenario through a mutating capability if desired.
+        return runScenarioCapacityAnalysis(project, patch);
       }),
     },
     {
       name: 'run_capacity_analysis', title: 'Run capacity analysis',
       description: 'Runs deterministic ECMP/single-path routing and capacity/service-target checks on the current model plus active scenario.',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true },
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true, untrustedContentHint: true },
       execute: activityWrapper(services, 'run_capacity_analysis', true, (result) => {
         const analysis = result as CapacityAnalysis; return `${analysis.result.verdict} · ${analysis.routing.mode} · peak ${analysis.result.metrics.peakUtilizationPct}%`;
       }, async () => { const analysis = services.getCapacityAnalysis?.() ?? runScenarioCapacityAnalysis(services.getProject(), services.getActiveScenario()); services.publishCapacityAnalysis(analysis); return analysis; }),
@@ -307,7 +309,7 @@ export async function registerCoreTools(context: ModelContextLike, services: Inf
           strategy: { type: 'string', enum: ['auto_mitigate', 'set_link_capacity'] }, targetHeadroomPct: { type: 'number', minimum: 0, maximum: 90 },
           linkId: { type: 'string' }, capacityGbps: { type: 'number', exclusiveMinimum: 0 },
         }, required: ['strategy'], additionalProperties: false,
-      }, annotations: { readOnlyHint: false },
+      }, annotations: { readOnlyHint: false, untrustedContentHint: true },
       execute: activityWrapper(services, 'propose_change', false, (result) => {
         const candidate = result as CandidatePlan; return `${candidate.commands.length} candidate change(s) · ${candidate.objective.value} ${candidate.objective.unit ?? ''}`.trim();
       }, async (input) => {
@@ -332,7 +334,7 @@ export async function registerResilienceTools(context: ModelContextLike, service
         maxScenarios: { type: 'integer', minimum: 1, maximum: 500 }, workerCount: { type: 'integer', minimum: 1, maximum: 8 },
         timeLimitMs: { type: 'integer', minimum: 50, maximum: 120000 },
       }, additionalProperties: false,
-    }, annotations: { readOnlyHint: true },
+    }, annotations: { readOnlyHint: true, untrustedContentHint: true },
     execute: activityWrapper(services, 'run_contingencies', true, (result) => {
       const analysis = result as ContingencyAnalysis;
       return `${analysis.completedScenarios}/${analysis.totalEligibleScenarios} scenarios · ${analysis.executionMode} · worst ${analysis.result.metrics.worstLinkId} · ${analysis.result.verdict}`;
@@ -345,11 +347,9 @@ export async function registerResilienceTools(context: ModelContextLike, service
         timeLimitMs: input.timeLimitMs === undefined ? undefined : Number(input.timeLimitMs),
       });
       assertNotAborted(options?.signal);
+      // Publishing the derived ranking is allowed; replaying a counterexample is a separate
+      // mutating capability so this analysis call never changes the active scenario.
       services.publishContingencyAnalysis(analysis);
-      if (analysis.status === 'complete' && analysis.worst) {
-        services.setActiveScenario(analysis.worst.patch);
-        services.selectEvidence?.({ type: 'link', id: analysis.worst.linkId });
-      }
       return analysis;
     }),
   }]);
@@ -376,7 +376,7 @@ export async function registerViolationTools(context: ModelContextLike, services
     {
       name: 'inspect_violation', title: 'Inspect a current violation',
       description: 'Returns one concrete current violation plus stable-ID evidence from the shared capacity analysis.',
-      inputSchema: { type: 'object', properties: { violationId: { type: 'string' } }, additionalProperties: false }, annotations: { readOnlyHint: true },
+      inputSchema: { type: 'object', properties: { violationId: { type: 'string' } }, additionalProperties: false }, annotations: { readOnlyHint: true, untrustedContentHint: true },
       execute: activityWrapper(services, 'inspect_violation', true, (result) => {
         const row = result as { violation: Violation }; return `${row.violation.type} · ${row.violation.linkId ?? row.violation.demandId ?? row.violation.id}`;
       }, async (input) => {
@@ -387,24 +387,9 @@ export async function registerViolationTools(context: ModelContextLike, services
       }),
     },
     {
-      name: 'show_counterexample', title: 'Show a contingency counterexample',
-      description: 'Selects and replays a ranked N-1 counterexample in the shared UI. This changes only ephemeral scenario/evidence selection, not the canonical project.',
-      inputSchema: { type: 'object', properties: { linkId: { type: 'string' } }, additionalProperties: false }, annotations: { readOnlyHint: false },
-      execute: activityWrapper(services, 'show_counterexample', false, (result) => {
-        const row = result as { linkId: string; verdict: string; score: number }; return `${row.linkId} · ${row.verdict} · score ${row.score}`;
-      }, async (input) => {
-        const contingencies = services.getContingencyAnalysis?.() ?? null;
-        if (!contingencies) throw new Error('No contingency ranking exists. Run contingencies first.');
-        const item = typeof input.linkId === 'string' ? contingencies.cases.find((entry) => entry.linkId === input.linkId) : contingencies.worst;
-        if (!item) throw new Error('Requested contingency is not in the current ranking.');
-        services.setActiveScenario(item.patch); services.selectEvidence?.({ type: 'link', id: item.linkId });
-        return { linkId: item.linkId, verdict: item.verdict, score: item.score, patchId: item.patch.id, affectedDemandIds: item.affectedDemandIds };
-      }),
-    },
-    {
       name: 'find_bottlenecks', title: 'Find min-cut bottleneck evidence',
       description: 'Runs deterministic max-flow/min-cut for selected or inferred endpoints on the active scenario and maps cut edges to stable graph link IDs.',
-      inputSchema: { type: 'object', properties: { sourceId: { type: 'string' }, targetId: { type: 'string' } }, additionalProperties: false }, annotations: { readOnlyHint: true },
+      inputSchema: { type: 'object', properties: { sourceId: { type: 'string' }, targetId: { type: 'string' } }, additionalProperties: false }, annotations: { readOnlyHint: true, untrustedContentHint: true },
       execute: activityWrapper(services, 'find_bottlenecks', true, (result) => {
         const analysis = result as BottleneckAnalysis; return `${analysis.sourceId}→${analysis.targetId} cut ${analysis.cut.cutCapacityGbps} Gbps · ${analysis.cut.cutLinkIds.join(', ') || 'no cut edges'}`;
       }, async (input) => {
@@ -418,12 +403,32 @@ export async function registerViolationTools(context: ModelContextLike, services
   return registerGroup(context, tools);
 }
 
+export async function registerCounterexampleTools(context: ModelContextLike, services: InfraTwinToolServices): Promise<() => void> {
+  return registerGroup(context, [
+    {
+      name: 'show_counterexample', title: 'Show a contingency counterexample',
+      description: 'Selects and replays a ranked N-1 counterexample in the shared UI. This changes only ephemeral scenario/evidence selection, not the canonical project.',
+      inputSchema: { type: 'object', properties: { linkId: { type: 'string' } }, additionalProperties: false }, annotations: { readOnlyHint: false, untrustedContentHint: true },
+      execute: activityWrapper(services, 'show_counterexample', false, (result) => {
+        const row = result as { linkId: string; verdict: string; score: number }; return `${row.linkId} · ${row.verdict} · score ${row.score}`;
+      }, async (input) => {
+        const contingencies = services.getContingencyAnalysis?.() ?? null;
+        if (!contingencies) throw new Error('No contingency ranking exists. Run contingencies first.');
+        const item = typeof input.linkId === 'string' ? contingencies.cases.find((entry) => entry.linkId === input.linkId) : contingencies.worst;
+        if (!item) throw new Error('Requested contingency is not in the current ranking.');
+        services.setActiveScenario(item.patch); services.selectEvidence?.({ type: 'link', id: item.linkId });
+        return { linkId: item.linkId, verdict: item.verdict, score: item.score, patchId: item.patch.id, affectedDemandIds: item.affectedDemandIds };
+      }),
+    }
+  ]);
+}
+
 export async function registerCandidateTools(context: ModelContextLike, services: InfraTwinToolServices): Promise<() => void> {
   const tools: WebMCPTool[] = [
     {
       name: 'compare_candidate', title: 'Compare current candidate',
       description: 'Compares the visible candidate against the current model under the active scenario and publishes deterministic before/after metrics.',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true },
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true, untrustedContentHint: true },
       execute: activityWrapper(services, 'compare_candidate', true, (result) => {
         const comparison = result as CandidateComparison; return `${comparison.before.result.verdict} → ${comparison.after.result.verdict} · peak Δ ${comparison.deltaPeakUtilizationPct}%`;
       }, async () => {
@@ -434,7 +439,7 @@ export async function registerCandidateTools(context: ModelContextLike, services
     {
       name: 'apply_candidate', title: 'Apply current candidate',
       description: 'Commits the visible candidate to the local canonical project after base-hash verification. This mutates project state and clears the candidate.',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: false },
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: false, untrustedContentHint: true },
       execute: activityWrapper(services, 'apply_candidate', false, (result) => `applied · model ${modelHash(result as NetworkProject)}`, async () => {
         const candidate = services.getCandidate(); if (!candidate) throw new Error('No candidate exists.');
         const nextProject = applyCandidatePlan(services.getProject(), candidate);
@@ -445,7 +450,7 @@ export async function registerCandidateTools(context: ModelContextLike, services
     {
       name: 'discard_candidate', title: 'Discard current candidate',
       description: 'Removes the visible candidate plan without changing the canonical project.',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: false },
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: false, untrustedContentHint: true },
       execute: activityWrapper(services, 'discard_candidate', false, () => 'candidate discarded', async () => {
         if (!services.getCandidate()) throw new Error('No candidate exists.');
         services.setCandidate(null); services.publishCandidateComparison(null); return { discarded: true, modelHash: modelHash(services.getProject()) };
@@ -481,14 +486,19 @@ export async function registerOptimizerTools(context: ModelContextLike, services
         targetUtilizationPct: { type: 'number', exclusiveMinimum: 0, maximum: 100 },
         budgetCostUnits: { type: 'number', minimum: 0 }, includeBaseline: { type: 'boolean' },
         includeTopContingencies: { type: 'integer', minimum: 0, maximum: 10 }, timeLimitMs: { type: 'integer', minimum: 50, maximum: 30000 },
-      }, additionalProperties: false }, annotations: { readOnlyHint: false },
+      }, additionalProperties: false }, annotations: { readOnlyHint: false, untrustedContentHint: true },
       execute: activityWrapper(services, 'optimize_capacity_plan', false, (result) => {
         const row = result as CapacityOptimizationResult; return `${row.diagnostics.status} · ${row.diagnostics.proof} · ${row.selectedUpgrades.length} upgrade(s) · objective ${row.diagnostics.objectiveValue ?? 'n/a'}`;
       }, async (input, options) => {
         if (!services.optimizeCapacity) throw new Error('Optimizer is not loaded in the application.');
         const requirements = optimizerScenarioRequirements(services, input);
+        const expectedModelHash = modelHash(services.getProject());
+        const expectedScenarioHash = scenarioHash(services.getActiveScenario());
         const result = await services.optimizeCapacity(requirements, { signal: options?.signal });
         assertNotAborted(options?.signal);
+        if (modelHash(services.getProject()) !== expectedModelHash || scenarioHash(services.getActiveScenario()) !== expectedScenarioHash) {
+          throw new Error('Optimizer result is stale because the model or active scenario changed before publication.');
+        }
         services.publishOptimizationResult?.(result);
         if (result.candidate) { services.setCandidate(result.candidate); services.publishCandidateComparison(null); services.publishCandidateVerification?.(null); }
         return result;
@@ -497,12 +507,19 @@ export async function registerOptimizerTools(context: ModelContextLike, services
     {
       name: 'optimize_routing', title: 'Solve traffic allocation LP',
       description: 'Runs a HiGHS flow-allocation LP on the current network snapshot and returns minimum possible maximum utilization plus per-link flow evidence. It does not mutate the project.',
-      inputSchema: { type: 'object', properties: { timeLimitMs: { type: 'integer', minimum: 50, maximum: 30000 } }, additionalProperties: false }, annotations: { readOnlyHint: true },
+      inputSchema: { type: 'object', properties: { timeLimitMs: { type: 'integer', minimum: 50, maximum: 30000 } }, additionalProperties: false }, annotations: { readOnlyHint: true, untrustedContentHint: true },
       execute: activityWrapper(services, 'optimize_routing', true, (result) => {
         const row = result as TrafficAllocationResult; return `${row.diagnostics.status} · max utilization ${row.maxUtilizationPct ?? 'n/a'}% · ${row.allocations.length} flow rows`;
       }, async (_input, options) => {
         if (!services.optimizeRouting) throw new Error('Optimizer is not loaded in the application.');
-        return services.optimizeRouting({ signal: options?.signal });
+        const expectedModelHash = modelHash(services.getProject());
+        const expectedScenarioHash = scenarioHash(services.getActiveScenario());
+        const result = await services.optimizeRouting({ signal: options?.signal });
+        assertNotAborted(options?.signal);
+        if (modelHash(services.getProject()) !== expectedModelHash || scenarioHash(services.getActiveScenario()) !== expectedScenarioHash) {
+          throw new Error('Routing optimization result is stale because the model or active scenario changed.');
+        }
+        return result;
       }),
     },
     {
@@ -511,7 +528,7 @@ export async function registerOptimizerTools(context: ModelContextLike, services
       inputSchema: { type: 'object', properties: {
         targetUtilizationPct: { type: 'number', exclusiveMinimum: 0, maximum: 100 }, budgetCostUnits: { type: 'number', minimum: 0 },
         includeBaseline: { type: 'boolean' }, includeTopContingencies: { type: 'integer', minimum: 0, maximum: 10 },
-      }, additionalProperties: false }, annotations: { readOnlyHint: true },
+      }, additionalProperties: false }, annotations: { readOnlyHint: true, untrustedContentHint: true },
       execute: activityWrapper(services, 'verify_candidate', true, (result) => {
         const row = result as CandidateVerification; return `${row.status} · cost ${row.calculatedCost ?? 'n/a'} · ${row.violations.length} disagreement(s)`;
       }, async (input, options) => {
@@ -519,6 +536,8 @@ export async function registerOptimizerTools(context: ModelContextLike, services
         if (!services.verifyCandidate) throw new Error('Independent verifier is not loaded in the application.');
         const requirements = optimizerScenarioRequirements(services, input);
         const result = await services.verifyCandidate(candidate, requirements, { signal: options?.signal });
+        assertNotAborted(options?.signal);
+        if (candidate.baseModelHash !== modelHash(services.getProject())) throw new Error('Candidate verification is stale because the project changed.');
         services.publishCandidateVerification?.(result); return result;
       }),
     },
@@ -537,7 +556,7 @@ export async function registerInspectNetworkTool(context: ModelContextLike, getP
   await context.registerTool({
     name: 'inspect_network', title: 'Inspect current network',
     description: 'Reads the currently open InfraTwin network and returns a compact deterministic topology/capacity summary. It does not modify project state.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true },
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true, untrustedContentHint: true },
     execute: async () => inspectNetwork(getProject()),
   }, { signal: controller.signal });
   return () => controller.abort();

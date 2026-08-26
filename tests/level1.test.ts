@@ -184,11 +184,14 @@ test('WebMCP base tools expose schemas/annotations and drive shared application 
   assert.equal(tools.get('run_capacity_analysis')?.annotations?.readOnlyHint, true);
   assert.equal(tools.get('propose_change')?.annotations?.readOnlyHint, false);
 
-  await tools.get('simulate_change')!.execute({ disabledLinkIds: ['L1'], name: 'Agent maintenance' });
-  assert.deepEqual(services.getActiveScenario()?.disabledLinkIds, ['L1']);
+  const simulated = await tools.get('simulate_change')!.execute({ disabledLinkIds: ['L1'], name: 'Agent maintenance' }) as ReturnType<typeof runScenarioCapacityAnalysis>;
+  assert.equal(simulated.result.verdict, 'FAIL');
+  assert.equal(services.getActiveScenario(), null, 'read-only simulation must not change active shared scenario');
   assert.equal(project.links.find((link) => link.id === 'L1')?.available, true);
-  await tools.get('propose_change')!.execute({ strategy: 'auto_mitigate', targetHeadroomPct: 20 });
+  assert.equal(tools.get('simulate_change')?.annotations?.untrustedContentHint, true);
+  await tools.get('propose_change')!.execute({ strategy: 'set_link_capacity', linkId: 'L3', capacityGbps: 15 });
   assert.ok(candidate);
+  assert.equal(services.getCandidate()?.commands[0]?.args.linkId, 'L3');
   assert.equal(activities.at(-1)?.tool, 'propose_change');
   assert.equal(activities.at(-1)?.status, 'success');
   cleanup();
