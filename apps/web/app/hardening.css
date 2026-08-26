@@ -1,0 +1,7 @@
+@media (min-width: 1181px) {
+  .scenario-panel {
+    max-height: 690px;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+}
