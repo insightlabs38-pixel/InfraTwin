@@ -13,6 +13,20 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
+      - run: npx playwright install --with-deps chromium
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
+      - run: npm run test:e2e
+      - name: Upload browser inspection artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: level3-browser-inspection
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: ignore
+          retention-days: 7
+      - run: npm run benchmark:level2
+      - run: npm run benchmark:level3

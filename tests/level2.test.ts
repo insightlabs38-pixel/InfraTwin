@@ -19,10 +19,12 @@ import {
 import { loadResilienceGap } from '../packages/scenarios/src/index.ts';
 import {
   CANDIDATE_TOOL_NAMES,
+  COUNTEREXAMPLE_TOOL_NAMES,
   CORE_TOOL_NAMES,
   RESILIENCE_TOOL_NAMES,
   VIOLATION_TOOL_NAMES,
   registerCandidateTools,
+  registerCounterexampleTools,
   registerCoreTools,
   registerResilienceTools,
   registerViolationTools,
@@ -234,14 +236,18 @@ test('dynamic WebMCP registration groups expose only their state capabilities an
   const disposeResilience = await registerResilienceTools(harness.context, harness.services);
   assert.deepEqual([...harness.tools.keys()].slice(-1), [...RESILIENCE_TOOL_NAMES]);
   const disposeViolation = await registerViolationTools(harness.context, harness.services);
-  assert.deepEqual([...harness.tools.keys()].slice(-3), [...VIOLATION_TOOL_NAMES]);
+  assert.deepEqual([...harness.tools.keys()].slice(-2), [...VIOLATION_TOOL_NAMES]);
+  assert.equal(harness.tools.has('show_counterexample'), false);
+  harness.setContingencies(runLinkContingencies(loadResilienceGap()));
+  const disposeCounterexample = await registerCounterexampleTools(harness.context, harness.services);
+  assert.deepEqual([...harness.tools.keys()].slice(-1), [...COUNTEREXAMPLE_TOOL_NAMES]);
   const candidate = (await harness.tools.get('propose_change')!.execute({ strategy: 'set_link_capacity', linkId: 'R4', capacityGbps: 14 })) as NonNullable<ReturnType<typeof harness.services.getCandidate>>;
   assert.ok(candidate);
   const disposeCandidate = await registerCandidateTools(harness.context, harness.services);
   assert.deepEqual([...harness.tools.keys()].slice(-3), [...CANDIDATE_TOOL_NAMES]);
 
-  disposeCandidate(); disposeViolation(); disposeResilience(); disposeCore();
-  for (const name of [...CORE_TOOL_NAMES, ...RESILIENCE_TOOL_NAMES, ...VIOLATION_TOOL_NAMES, ...CANDIDATE_TOOL_NAMES]) assert.equal(harness.signals.get(name)?.aborted, true, `${name} registration should be aborted`);
+  disposeCandidate(); disposeCounterexample(); disposeViolation(); disposeResilience(); disposeCore();
+  for (const name of [...CORE_TOOL_NAMES, ...RESILIENCE_TOOL_NAMES, ...VIOLATION_TOOL_NAMES, ...COUNTEREXAMPLE_TOOL_NAMES, ...CANDIDATE_TOOL_NAMES]) assert.equal(harness.signals.get(name)?.aborted, true, `${name} registration should be aborted`);
 });
 
 test('Level 2 WebMCP violation tools inspect, replay, and map min-cut evidence to graph IDs', async () => {
@@ -249,7 +255,9 @@ test('Level 2 WebMCP violation tools inspect, replay, and map min-cut evidence t
   const ranking = runLinkContingencies(loadResilienceGap());
   harness.setContingencies(ranking);
   harness.setPatch(ranking.worst!.patch);
-  const dispose = await registerViolationTools(harness.context, harness.services);
+  const disposeViolation = await registerViolationTools(harness.context, harness.services);
+  assert.equal(harness.tools.has('show_counterexample'), false);
+  const disposeCounterexample = await registerCounterexampleTools(harness.context, harness.services);
 
   const violation = await harness.tools.get('inspect_violation')!.execute({});
   assert.ok((violation as { violation: { id: string } }).violation.id);
@@ -260,7 +268,7 @@ test('Level 2 WebMCP violation tools inspect, replay, and map min-cut evidence t
   const replay = await harness.tools.get('show_counterexample')!.execute({ linkId: 'R2' });
   assert.equal((replay as { linkId: string }).linkId, 'R2');
   assert.ok(harness.getPatch()?.disabledLinkIds.includes('R2'));
-  dispose();
+  disposeCounterexample(); disposeViolation();
 });
 
 test('WebMCP contingency execution honors AbortSignal and records cancellation activity', async () => {
