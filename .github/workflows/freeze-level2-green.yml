@@ -1,0 +1,26 @@
+name: Freeze Level 2 green
+
+on:
+  push:
+    branches:
+      - feature/level-3-optimization
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create level-2-green tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin refs/tags/level-2-green >/dev/null 2>&1; then
+            echo 'level-2-green already exists'
+            exit 0
+          fi
+          git tag level-2-green 2f6d3dad1578a95b378f0cd31b9bd1c5b0b58667
+          git push origin refs/tags/level-2-green
