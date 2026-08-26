@@ -153,3 +153,14 @@ h2 { margin-bottom: 0; font-size: 17px; }
   .summary-grid, .scenario-list { grid-template-columns: 1fr; }
   .demand-row { align-items: flex-start; flex-direction: column; }
 }
+button.danger { background: #32171b; border-color: #713841; color: #ffb0b7; }
+button.danger:hover { background: #452026; }
+.compute-card { margin-top: 10px; border: 1px solid #29415f; border-radius: 10px; background: #0c1826; padding: 10px; }
+.compute-card span { display: block; color: #7fa4cd; font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
+.compute-card strong { display: block; margin-top: 5px; font-size: 11px; }
+.compute-card p { margin: 5px 0 0; color: #8ea2bb; font-size: 10px; line-height: 1.45; }
+.compute-card.cancelled { border-color: #655232; background: #211b10; }
+.compute-card.error { border-color: #6f343c; background: #261217; }
+.compute-card.complete { border-color: #2b5d45; background: #0d1d16; }
+.cut-block { border: 1px solid #31537d; border-radius: 9px; background: #0c1725; padding: 9px; }
+.capability-note { margin: 8px 0 0; color: #7f91a8; font-size: 10px; line-height: 1.45; }

@@ -125,6 +125,12 @@ export function validateNetworkProject(value: unknown): ValidationResult {
   const demandIds = new Set<string>();
   const classIds = new Set<string>();
 
+  if (nodes.length > 500) errors.push('nodes must contain at most 500 entries for browser-local analysis');
+  if (links.length > 2000) errors.push('links must contain at most 2000 entries for browser-local analysis');
+  if (demands.length > 2000) errors.push('demands must contain at most 2000 entries for browser-local analysis');
+  if (classes.length > 64) errors.push('serviceClasses must contain at most 64 entries');
+  const routingMode = (value.routingProfile as Record<string, unknown>).mode;
+
   nodes.forEach((node, index) => {
     if (!isRecord(node)) return void errors.push(`nodes[${index}] must be an object`);
     if (!nonEmptyString(node.id)) errors.push(`nodes[${index}].id must be non-empty`);
@@ -157,6 +163,7 @@ export function validateNetworkProject(value: unknown): ValidationResult {
     if (!nonEmptyString(link.target) || !nodeIds.has(String(link.target))) errors.push(`links[${index}].target must reference a node`);
     if (!finiteNumber(link.capacityGbps) || Number(link.capacityGbps) <= 0) errors.push(`links[${index}].capacityGbps must be > 0`);
     if (!finiteNumber(link.weight) || Number(link.weight) < 0) errors.push(`links[${index}].weight must be >= 0`);
+    if (routingMode === 'ecmp' && finiteNumber(link.weight) && Number(link.weight) <= 0) errors.push(`links[${index}].weight must be > 0 when routingProfile.mode is ecmp`);
     if (link.bidirectional !== undefined && typeof link.bidirectional !== 'boolean') errors.push(`links[${index}].bidirectional must be boolean`);
     if (link.available !== undefined && typeof link.available !== 'boolean') errors.push(`links[${index}].available must be boolean`);
     if (link.upgradeOptions !== undefined) {

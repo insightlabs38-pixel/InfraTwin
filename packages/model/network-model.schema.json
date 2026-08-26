@@ -30,25 +30,29 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/node"
-      }
+      },
+      "maxItems": 500
     },
     "links": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/link"
-      }
+      },
+      "maxItems": 2000
     },
     "demands": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/demand"
-      }
+      },
+      "maxItems": 2000
     },
     "serviceClasses": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/serviceClass"
-      }
+      },
+      "maxItems": 64
     },
     "routingProfile": {
       "$ref": "#/$defs/routingProfile"
@@ -245,5 +249,40 @@
       "additionalProperties": false
     }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "routingProfile": {
+            "properties": {
+              "mode": {
+                "const": "ecmp"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "links": {
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/link"
+                },
+                {
+                  "properties": {
+                    "weight": {
+                      "exclusiveMinimum": 0
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
 }

@@ -1,13 +1,17 @@
 import type { CandidatePlan, NetworkProject, ScenarioPatch } from '../../model/src/index.ts';
-import { applyCandidatePlan, applyScenario, modelHash, scenarioHash } from '../../model/src/index.ts';
+import { applyCandidatePlan, modelHash, scenarioHash } from '../../model/src/index.ts';
 import {
+  analyzeBottleneck,
   compareCandidate,
   proposeCapacityMitigation,
-  runLinkContingencies,
   runScenarioCapacityAnalysis,
+  type BottleneckAnalysis,
   type CandidateComparison,
   type CapacityAnalysis,
   type ContingencyAnalysis,
+  type ContingencyRunOptions,
+  type EvidenceRef,
+  type Violation,
 } from '../../evidence/src/index.ts';
 
 export interface InspectNetworkSummary {
@@ -24,7 +28,7 @@ export interface InspectNetworkSummary {
   disabledLinkIds: string[];
   verdict: string;
   peakUtilizationPct: number;
-  violations: Array<{ type: string; linkId?: string; demandId?: string; message: string }>;
+  violations: Array<{ id: string; type: string; linkId?: string; demandId?: string; message: string }>;
 }
 
 export interface InspectDemandsSummary {
@@ -43,6 +47,7 @@ export interface InspectDemandsSummary {
     maxUtilizationPct: number;
     reachable: boolean;
     routeLinkIds: string[];
+    equalCostPathCount: number;
   }>;
 }
 
@@ -76,26 +81,28 @@ export interface InfraTwinToolServices {
   setProject(project: NetworkProject): void;
   getActiveScenario(): ScenarioPatch | null;
   setActiveScenario(patch: ScenarioPatch | null): void;
+  getCapacityAnalysis?(): CapacityAnalysis;
   publishCapacityAnalysis(analysis: CapacityAnalysis): void;
+  runContingencies?(options?: ContingencyRunOptions): Promise<ContingencyAnalysis>;
+  getContingencyAnalysis?(): ContingencyAnalysis | null;
   publishContingencyAnalysis(analysis: ContingencyAnalysis): void;
+  publishBottleneckAnalysis?(analysis: BottleneckAnalysis | null): void;
+  selectEvidence?(evidence: EvidenceRef | null): void;
   getCandidate(): CandidatePlan | null;
   setCandidate(candidate: CandidatePlan | null): void;
   publishCandidateComparison(comparison: CandidateComparison | null): void;
   onActivity(event: ToolActivityEvent): void;
 }
 
-export const BASE_TOOL_NAMES = [
-  'inspect_network',
-  'inspect_demands',
-  'simulate_change',
-  'run_capacity_analysis',
-  'run_contingencies',
-  'propose_change',
-] as const;
+export const CORE_TOOL_NAMES = ['inspect_network', 'inspect_demands', 'simulate_change', 'run_capacity_analysis', 'propose_change'] as const;
+export const RESILIENCE_TOOL_NAMES = ['run_contingencies'] as const;
+export const VIOLATION_TOOL_NAMES = ['inspect_violation', 'show_counterexample', 'find_bottlenecks'] as const;
 export const CANDIDATE_TOOL_NAMES = ['compare_candidate', 'apply_candidate', 'discard_candidate'] as const;
+export const BASE_TOOL_NAMES = [...CORE_TOOL_NAMES, ...RESILIENCE_TOOL_NAMES] as const;
 
 function round(value: number): number { return Math.round(value * 1000) / 1000; }
 function elapsed(start: number): number { return round(Date.now() - start); }
+function isAbort(error: unknown): boolean { return error instanceof Error && error.name === 'AbortError'; }
 
 export function inspectNetwork(project: NetworkProject, patch?: ScenarioPatch | null): InspectNetworkSummary {
   const analysis = runScenarioCapacityAnalysis(project, patch);
@@ -113,7 +120,7 @@ export function inspectNetwork(project: NetworkProject, patch?: ScenarioPatch | 
     disabledLinkIds: analysis.snapshot.links.filter((link) => link.available === false).map((link) => link.id).sort(),
     verdict: analysis.result.verdict,
     peakUtilizationPct: Number(analysis.result.metrics.peakUtilizationPct),
-    violations: analysis.result.violations.map(({ type, linkId, demandId, message }) => ({ type, linkId, demandId, message })),
+    violations: analysis.result.violations.map(({ id, type, linkId, demandId, message }) => ({ id, type, linkId, demandId, message })),
   };
 }
 
@@ -139,14 +146,18 @@ export function inspectDemands(project: NetworkProject, patch?: ScenarioPatch | 
         serviceClassName: serviceClass?.name ?? demand.serviceClassId,
         maxUtilizationPct: serviceClass?.maxUtilizationPct ?? 100,
         reachable: route?.reachable ?? false,
-        routeLinkIds: route?.linkIds ?? [],
+        routeLinkIds: route ? Object.keys(route.linkFractions).filter((linkId) => route.linkFractions[linkId] > 0).sort() : [],
+        equalCostPathCount: route?.paths.length ?? 0,
       };
     }),
   };
 }
 
 function assertNotAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new DOMException('Tool execution cancelled', 'AbortError');
+  if (signal?.aborted) {
+    if (typeof DOMException !== 'undefined') throw new DOMException('Tool execution cancelled', 'AbortError');
+    const error = new Error('Tool execution cancelled'); error.name = 'AbortError'; throw error;
+  }
 }
 
 function activityWrapper(
@@ -166,7 +177,7 @@ function activityWrapper(
       services.onActivity({ id: `${tool}:${start}`, tool, readOnly, status: 'success', startedAt, durationMs: elapsed(start), summary: summarize(result) });
       return result;
     } catch (error) {
-      const cancelled = options?.signal?.aborted || (error instanceof DOMException && error.name === 'AbortError');
+      const cancelled = options?.signal?.aborted || isAbort(error);
       services.onActivity({
         id: `${tool}:${start}`,
         tool,
@@ -213,11 +224,7 @@ function buildSimulationPatch(project: NetworkProject, input: Record<string, unk
   return {
     id: `webmcp-simulation-${Date.now()}`,
     name: typeof input.name === 'string' && input.name.trim() ? input.name.trim() : 'Agent what-if simulation',
-    disabledNodeIds: [],
-    disabledLinkIds,
-    demandMultipliers,
-    addedDemands: [],
-    linkCapacityOverrides,
+    disabledNodeIds: [], disabledLinkIds, demandMultipliers, addedDemands: [], linkCapacityOverrides,
   };
 }
 
@@ -229,218 +236,230 @@ function createExplicitCapacityCandidate(project: NetworkProject, linkId: string
     id: `candidate:explicit:${modelHash(project)}:${linkId}:${capacityGbps}`,
     name: `Increase ${linkId} to ${capacityGbps} Gbps`,
     baseModelHash: modelHash(project),
-    commands: [{
-      id: `cmd-capacity-${linkId}`,
-      type: 'set_link_capacity',
-      actor: 'agent',
-      args: { linkId, capacityGbps },
-      createdAt: new Date(0).toISOString(),
-    }],
-    objective: { name: 'manualProposal', value: 0, unit: 'cost-units' },
-    rationaleEvidenceIds: [],
+    commands: [{ id: `cmd-capacity-${linkId}`, type: 'set_link_capacity', actor: 'agent', args: { linkId, capacityGbps }, createdAt: new Date(0).toISOString() }],
+    objective: { name: 'manualProposal', value: 0, unit: 'cost-units' }, rationaleEvidenceIds: [],
   };
 }
 
-export async function registerBaseTools(context: ModelContextLike, services: InfraTwinToolServices): Promise<() => void> {
+async function registerGroup(context: ModelContextLike, tools: WebMCPTool[]): Promise<() => void> {
   const controller = new AbortController();
-  const register = (tool: WebMCPTool) => context.registerTool(tool, { signal: controller.signal });
-
-  await register({
-    name: 'inspect_network',
-    title: 'Inspect current network',
-    description: 'Reads the current InfraTwin project and active what-if scenario, returning a compact deterministic topology/capacity summary. Does not modify project state.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    annotations: { readOnlyHint: true },
-    execute: activityWrapper(services, 'inspect_network', true, (result) => {
-      const summary = result as InspectNetworkSummary;
-      return `${summary.nodeCount} nodes · ${summary.linkCount} links · ${summary.verdict} · peak ${summary.peakUtilizationPct}%`;
-    }, async () => inspectNetwork(services.getProject(), services.getActiveScenario())),
-  });
-
-  await register({
-    name: 'inspect_demands',
-    title: 'Inspect current demands',
-    description: 'Reads demand, service-class, and current routed-path summaries from the visible InfraTwin workspace. Does not modify project state.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    annotations: { readOnlyHint: true },
-    execute: activityWrapper(services, 'inspect_demands', true, (result) => {
-      const summary = result as InspectDemandsSummary;
-      return `${summary.demandCount} demands · ${summary.totalDemandGbps} Gbps`;
-    }, async () => inspectDemands(services.getProject(), services.getActiveScenario())),
-  });
-
-  await register({
-    name: 'simulate_change',
-    title: 'Simulate a network change',
-    description: 'Creates an ephemeral scenario over the current project, recomputes deterministic routing/capacity, and displays the result in the shared UI. The persistent project is not changed.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        name: { type: 'string' },
-        disabledLinkIds: { type: 'array', items: { type: 'string' } },
-        demandMultipliers: {
-          type: 'array',
-          items: { type: 'object', properties: { demandId: { type: 'string' }, multiplier: { type: 'number', minimum: 0 } }, required: ['demandId', 'multiplier'], additionalProperties: false },
-        },
-        linkCapacityOverrides: {
-          type: 'array',
-          items: { type: 'object', properties: { linkId: { type: 'string' }, capacityGbps: { type: 'number', exclusiveMinimum: 0 } }, required: ['linkId', 'capacityGbps'], additionalProperties: false },
-        },
-      },
-      additionalProperties: false,
-    },
-    annotations: { readOnlyHint: true },
-    execute: activityWrapper(services, 'simulate_change', true, (result) => {
-      const analysis = result as CapacityAnalysis;
-      return `${analysis.result.verdict} · peak ${analysis.result.metrics.peakUtilizationPct}% · ${analysis.result.violations.length} violations`;
-    }, async (input) => {
-      const project = services.getProject();
-      const patch = buildSimulationPatch(project, input);
-      const analysis = runScenarioCapacityAnalysis(project, patch);
-      services.setActiveScenario(patch);
-      services.publishCapacityAnalysis(analysis);
-      return analysis;
-    }),
-  });
-
-  await register({
-    name: 'run_capacity_analysis',
-    title: 'Run capacity analysis',
-    description: 'Runs deterministic routing and capacity/SLA-proxy checks on the current project plus active scenario. Does not modify the project.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    annotations: { readOnlyHint: true },
-    execute: activityWrapper(services, 'run_capacity_analysis', true, (result) => {
-      const analysis = result as CapacityAnalysis;
-      return `${analysis.result.verdict} · peak ${analysis.result.metrics.peakUtilizationPct}% · ${analysis.result.violations.length} violations`;
-    }, async () => {
-      const analysis = runScenarioCapacityAnalysis(services.getProject(), services.getActiveScenario());
-      services.publishCapacityAnalysis(analysis);
-      return analysis;
-    }),
-  });
-
-  await register({
-    name: 'run_contingencies',
-    title: 'Run single-link contingencies',
-    description: 'Tests every currently available single-link failure sequentially against the current canonical project, ranks impact, and replays the worst case in the shared UI. Does not commit a project mutation.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    annotations: { readOnlyHint: true },
-    execute: activityWrapper(services, 'run_contingencies', true, (result) => {
-      const analysis = result as ContingencyAnalysis;
-      return `${analysis.result.metrics.scenariosTested} scenarios · worst ${analysis.result.metrics.worstLinkId} · ${analysis.result.verdict}`;
-    }, async (_input, options) => {
-      assertNotAborted(options?.signal);
-      const analysis = runLinkContingencies(services.getProject());
-      assertNotAborted(options?.signal);
-      services.publishContingencyAnalysis(analysis);
-      if (analysis.worst) services.setActiveScenario(analysis.worst.patch);
-      return analysis;
-    }),
-  });
-
-  await register({
-    name: 'propose_change',
-    title: 'Propose a candidate change',
-    description: 'Creates a visible, non-applied candidate plan. Use auto_mitigate to propose deterministic capacity upgrades for current violations, or set_link_capacity for an explicit capacity proposal. Does not commit the candidate to the project.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        strategy: { type: 'string', enum: ['auto_mitigate', 'set_link_capacity'] },
-        targetHeadroomPct: { type: 'number', minimum: 0, maximum: 90 },
-        linkId: { type: 'string' },
-        capacityGbps: { type: 'number', exclusiveMinimum: 0 },
-      },
-      required: ['strategy'],
-      additionalProperties: false,
-    },
-    annotations: { readOnlyHint: false },
-    execute: activityWrapper(services, 'propose_change', false, (result) => {
-      const candidate = result as CandidatePlan;
-      return `${candidate.commands.length} candidate change(s) · ${candidate.objective.value} ${candidate.objective.unit ?? ''}`.trim();
-    }, async (input) => {
-      const project = services.getProject();
-      const strategy = String(input.strategy ?? '');
-      const candidate = strategy === 'set_link_capacity'
-        ? createExplicitCapacityCandidate(project, String(input.linkId ?? ''), Number(input.capacityGbps))
-        : proposeCapacityMitigation(project, services.getActiveScenario(), Number(input.targetHeadroomPct ?? 20));
-      if (!candidate) throw new Error('No capacity mitigation candidate is needed or available for the current evidence.');
-      services.setCandidate(candidate);
-      services.publishCandidateComparison(null);
-      return candidate;
-    }),
-  });
-
+  for (const tool of tools) await context.registerTool(tool, { signal: controller.signal });
   return () => controller.abort();
 }
 
+export async function registerCoreTools(context: ModelContextLike, services: InfraTwinToolServices): Promise<() => void> {
+  const tools: WebMCPTool[] = [
+    {
+      name: 'inspect_network', title: 'Inspect current network',
+      description: 'Reads the current InfraTwin project plus active scenario and returns deterministic topology/capacity state with hashes. It does not modify project state.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true },
+      execute: activityWrapper(services, 'inspect_network', true, (result) => {
+        const summary = result as InspectNetworkSummary; return `${summary.verdict} · ${summary.routingMode} · peak ${summary.peakUtilizationPct}%`;
+      }, async () => inspectNetwork(services.getProject(), services.getActiveScenario())),
+    },
+    {
+      name: 'inspect_demands', title: 'Inspect demands and ECMP routes',
+      description: 'Reads demands, service classes, current routed link sets, and equal-cost path counts from the shared model/scenario state.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true },
+      execute: activityWrapper(services, 'inspect_demands', true, (result) => {
+        const summary = result as InspectDemandsSummary; return `${summary.demandCount} demands · ${summary.totalDemandGbps} Gbps`;
+      }, async () => inspectDemands(services.getProject(), services.getActiveScenario())),
+    },
+    {
+      name: 'simulate_change', title: 'Simulate a what-if change',
+      description: 'Creates an ephemeral scenario overlay for failures, demand multipliers, or capacity overrides and publishes deterministic evidence without changing the canonical project.',
+      inputSchema: {
+        type: 'object', properties: {
+          name: { type: 'string' }, disabledLinkIds: { type: 'array', items: { type: 'string' } },
+          demandMultipliers: { type: 'array', items: { type: 'object', properties: { demandId: { type: 'string' }, multiplier: { type: 'number', minimum: 0 } }, required: ['demandId', 'multiplier'], additionalProperties: false } },
+          linkCapacityOverrides: { type: 'array', items: { type: 'object', properties: { linkId: { type: 'string' }, capacityGbps: { type: 'number', exclusiveMinimum: 0 } }, required: ['linkId', 'capacityGbps'], additionalProperties: false } },
+        }, additionalProperties: false,
+      }, annotations: { readOnlyHint: true },
+      execute: activityWrapper(services, 'simulate_change', true, (result) => {
+        const analysis = result as CapacityAnalysis; return `${analysis.result.verdict} · peak ${analysis.result.metrics.peakUtilizationPct}% · ${analysis.result.violations.length} violations`;
+      }, async (input) => {
+        const project = services.getProject();
+        const patch = buildSimulationPatch(project, input);
+        const analysis = runScenarioCapacityAnalysis(project, patch);
+        services.setActiveScenario(patch); services.publishCapacityAnalysis(analysis); return analysis;
+      }),
+    },
+    {
+      name: 'run_capacity_analysis', title: 'Run capacity analysis',
+      description: 'Runs deterministic ECMP/single-path routing and capacity/service-target checks on the current model plus active scenario.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true },
+      execute: activityWrapper(services, 'run_capacity_analysis', true, (result) => {
+        const analysis = result as CapacityAnalysis; return `${analysis.result.verdict} · ${analysis.routing.mode} · peak ${analysis.result.metrics.peakUtilizationPct}%`;
+      }, async () => { const analysis = services.getCapacityAnalysis?.() ?? runScenarioCapacityAnalysis(services.getProject(), services.getActiveScenario()); services.publishCapacityAnalysis(analysis); return analysis; }),
+    },
+    {
+      name: 'propose_change', title: 'Propose a candidate change',
+      description: 'Creates a visible, non-applied candidate plan. Auto mitigation proposes deterministic capacity upgrades for current violations; explicit mode proposes one link capacity change.',
+      inputSchema: {
+        type: 'object', properties: {
+          strategy: { type: 'string', enum: ['auto_mitigate', 'set_link_capacity'] }, targetHeadroomPct: { type: 'number', minimum: 0, maximum: 90 },
+          linkId: { type: 'string' }, capacityGbps: { type: 'number', exclusiveMinimum: 0 },
+        }, required: ['strategy'], additionalProperties: false,
+      }, annotations: { readOnlyHint: false },
+      execute: activityWrapper(services, 'propose_change', false, (result) => {
+        const candidate = result as CandidatePlan; return `${candidate.commands.length} candidate change(s) · ${candidate.objective.value} ${candidate.objective.unit ?? ''}`.trim();
+      }, async (input) => {
+        const project = services.getProject();
+        const candidate = String(input.strategy ?? '') === 'set_link_capacity'
+          ? createExplicitCapacityCandidate(project, String(input.linkId ?? ''), Number(input.capacityGbps))
+          : proposeCapacityMitigation(project, services.getActiveScenario(), Number(input.targetHeadroomPct ?? 20));
+        if (!candidate) throw new Error('No capacity mitigation candidate is needed or available for the current evidence.');
+        services.setCandidate(candidate); services.publishCandidateComparison(null); return candidate;
+      }),
+    },
+  ];
+  return registerGroup(context, tools);
+}
+
+export async function registerResilienceTools(context: ModelContextLike, services: InfraTwinToolServices): Promise<() => void> {
+  return registerGroup(context, [{
+    name: 'run_contingencies', title: 'Run bounded N-1 link contingencies',
+    description: 'Runs cancellable bounded N-1 link failures through the browser worker pool when available, reports progress/ranking, and protects publication with model/scenario hashes.',
+    inputSchema: {
+      type: 'object', properties: {
+        maxScenarios: { type: 'integer', minimum: 1, maximum: 500 }, workerCount: { type: 'integer', minimum: 1, maximum: 8 },
+        timeLimitMs: { type: 'integer', minimum: 50, maximum: 120000 },
+      }, additionalProperties: false,
+    }, annotations: { readOnlyHint: true },
+    execute: activityWrapper(services, 'run_contingencies', true, (result) => {
+      const analysis = result as ContingencyAnalysis;
+      return `${analysis.completedScenarios}/${analysis.totalEligibleScenarios} scenarios · ${analysis.executionMode} · worst ${analysis.result.metrics.worstLinkId} · ${analysis.result.verdict}`;
+    }, async (input, options) => {
+      if (!services.runContingencies) throw new Error('The application did not provide a contingency execution service.');
+      const analysis = await services.runContingencies({
+        signal: options?.signal,
+        maxScenarios: input.maxScenarios === undefined ? undefined : Number(input.maxScenarios),
+        workerCount: input.workerCount === undefined ? undefined : Number(input.workerCount),
+        timeLimitMs: input.timeLimitMs === undefined ? undefined : Number(input.timeLimitMs),
+      });
+      assertNotAborted(options?.signal);
+      services.publishContingencyAnalysis(analysis);
+      if (analysis.status === 'complete' && analysis.worst) {
+        services.setActiveScenario(analysis.worst.patch);
+        services.selectEvidence?.({ type: 'link', id: analysis.worst.linkId });
+      }
+      return analysis;
+    }),
+  }]);
+}
+
+function pickViolation(analysis: CapacityAnalysis, violationId?: string): Violation {
+  const violation = violationId ? analysis.result.violations.find((item) => item.id === violationId) : analysis.result.violations[0];
+  if (!violation) throw new Error(violationId ? `Unknown current violation ${violationId}` : 'No current violation exists.');
+  return violation;
+}
+
+function pickBottleneckEndpoints(analysis: CapacityAnalysis, sourceId?: string, targetId?: string): { sourceId: string; targetId: string } {
+  if (sourceId && targetId) return { sourceId, targetId };
+  const violation = analysis.result.violations.find((item) => item.demandId);
+  const demand = violation?.demandId ? analysis.snapshot.demands.find((item) => item.id === violation.demandId) : undefined;
+  const fallback = [...analysis.snapshot.demands].sort((a, b) => b.bandwidthGbps - a.bandwidthGbps || a.id.localeCompare(b.id))[0];
+  const selected = demand ?? fallback;
+  if (!selected) throw new Error('No demand is available to choose bottleneck endpoints.');
+  return { sourceId: sourceId ?? selected.source, targetId: targetId ?? selected.target };
+}
+
+export async function registerViolationTools(context: ModelContextLike, services: InfraTwinToolServices): Promise<() => void> {
+  const tools: WebMCPTool[] = [
+    {
+      name: 'inspect_violation', title: 'Inspect a current violation',
+      description: 'Returns one concrete current violation plus stable-ID evidence from the shared capacity analysis.',
+      inputSchema: { type: 'object', properties: { violationId: { type: 'string' } }, additionalProperties: false }, annotations: { readOnlyHint: true },
+      execute: activityWrapper(services, 'inspect_violation', true, (result) => {
+        const row = result as { violation: Violation }; return `${row.violation.type} · ${row.violation.linkId ?? row.violation.demandId ?? row.violation.id}`;
+      }, async (input) => {
+        const analysis = services.getCapacityAnalysis?.() ?? runScenarioCapacityAnalysis(services.getProject(), services.getActiveScenario());
+        const violation = pickViolation(analysis, typeof input.violationId === 'string' ? input.violationId : undefined);
+        const witnesses = analysis.result.witnesses.filter((item) => item.id === violation.linkId || item.demandId === violation.demandId || item.id === `route:${violation.demandId}`);
+        return { modelHash: analysis.result.modelHash, scenarioHash: analysis.result.scenarioHash, violation, witnesses };
+      }),
+    },
+    {
+      name: 'show_counterexample', title: 'Show a contingency counterexample',
+      description: 'Selects and replays a ranked N-1 counterexample in the shared UI. This changes only ephemeral scenario/evidence selection, not the canonical project.',
+      inputSchema: { type: 'object', properties: { linkId: { type: 'string' } }, additionalProperties: false }, annotations: { readOnlyHint: false },
+      execute: activityWrapper(services, 'show_counterexample', false, (result) => {
+        const row = result as { linkId: string; verdict: string; score: number }; return `${row.linkId} · ${row.verdict} · score ${row.score}`;
+      }, async (input) => {
+        const contingencies = services.getContingencyAnalysis?.() ?? null;
+        if (!contingencies) throw new Error('No contingency ranking exists. Run contingencies first.');
+        const item = typeof input.linkId === 'string' ? contingencies.cases.find((entry) => entry.linkId === input.linkId) : contingencies.worst;
+        if (!item) throw new Error('Requested contingency is not in the current ranking.');
+        services.setActiveScenario(item.patch); services.selectEvidence?.({ type: 'link', id: item.linkId });
+        return { linkId: item.linkId, verdict: item.verdict, score: item.score, patchId: item.patch.id, affectedDemandIds: item.affectedDemandIds };
+      }),
+    },
+    {
+      name: 'find_bottlenecks', title: 'Find min-cut bottleneck evidence',
+      description: 'Runs deterministic max-flow/min-cut for selected or inferred endpoints on the active scenario and maps cut edges to stable graph link IDs.',
+      inputSchema: { type: 'object', properties: { sourceId: { type: 'string' }, targetId: { type: 'string' } }, additionalProperties: false }, annotations: { readOnlyHint: true },
+      execute: activityWrapper(services, 'find_bottlenecks', true, (result) => {
+        const analysis = result as BottleneckAnalysis; return `${analysis.sourceId}→${analysis.targetId} cut ${analysis.cut.cutCapacityGbps} Gbps · ${analysis.cut.cutLinkIds.join(', ') || 'no cut edges'}`;
+      }, async (input) => {
+        const capacity = services.getCapacityAnalysis?.() ?? runScenarioCapacityAnalysis(services.getProject(), services.getActiveScenario());
+        const endpoints = pickBottleneckEndpoints(capacity, typeof input.sourceId === 'string' ? input.sourceId : undefined, typeof input.targetId === 'string' ? input.targetId : undefined);
+        const analysis = analyzeBottleneck(services.getProject(), endpoints.sourceId, endpoints.targetId, services.getActiveScenario());
+        services.publishBottleneckAnalysis?.(analysis); services.selectEvidence?.(analysis.evidence); return analysis;
+      }),
+    },
+  ];
+  return registerGroup(context, tools);
+}
+
 export async function registerCandidateTools(context: ModelContextLike, services: InfraTwinToolServices): Promise<() => void> {
-  const controller = new AbortController();
-  const register = (tool: WebMCPTool) => context.registerTool(tool, { signal: controller.signal });
+  const tools: WebMCPTool[] = [
+    {
+      name: 'compare_candidate', title: 'Compare current candidate',
+      description: 'Compares the visible candidate against the current model under the active scenario and publishes deterministic before/after metrics.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true },
+      execute: activityWrapper(services, 'compare_candidate', true, (result) => {
+        const comparison = result as CandidateComparison; return `${comparison.before.result.verdict} → ${comparison.after.result.verdict} · peak Δ ${comparison.deltaPeakUtilizationPct}%`;
+      }, async () => {
+        const candidate = services.getCandidate(); if (!candidate) throw new Error('No candidate exists.');
+        const comparison = compareCandidate(services.getProject(), candidate, services.getActiveScenario()); services.publishCandidateComparison(comparison); return comparison;
+      }),
+    },
+    {
+      name: 'apply_candidate', title: 'Apply current candidate',
+      description: 'Commits the visible candidate to the local canonical project after base-hash verification. This mutates project state and clears the candidate.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: false },
+      execute: activityWrapper(services, 'apply_candidate', false, (result) => `applied · model ${modelHash(result as NetworkProject)}`, async () => {
+        const candidate = services.getCandidate(); if (!candidate) throw new Error('No candidate exists.');
+        const nextProject = applyCandidatePlan(services.getProject(), candidate);
+        services.setProject(nextProject); services.setCandidate(null); services.publishCandidateComparison(null);
+        services.publishCapacityAnalysis(runScenarioCapacityAnalysis(nextProject, services.getActiveScenario())); return nextProject;
+      }),
+    },
+    {
+      name: 'discard_candidate', title: 'Discard current candidate',
+      description: 'Removes the visible candidate plan without changing the canonical project.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: false },
+      execute: activityWrapper(services, 'discard_candidate', false, () => 'candidate discarded', async () => {
+        if (!services.getCandidate()) throw new Error('No candidate exists.');
+        services.setCandidate(null); services.publishCandidateComparison(null); return { discarded: true, modelHash: modelHash(services.getProject()) };
+      }),
+    },
+  ];
+  return registerGroup(context, tools);
+}
 
-  await register({
-    name: 'compare_candidate',
-    title: 'Compare current candidate',
-    description: 'Compares the visible candidate plan against the current project under the active scenario and publishes before/after deterministic metrics. Does not apply the candidate.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    annotations: { readOnlyHint: true },
-    execute: activityWrapper(services, 'compare_candidate', true, (result) => {
-      const comparison = result as CandidateComparison;
-      return `${comparison.before.result.verdict} → ${comparison.after.result.verdict} · peak Δ ${comparison.deltaPeakUtilizationPct}%`;
-    }, async () => {
-      const candidate = services.getCandidate();
-      if (!candidate) throw new Error('No candidate exists.');
-      const comparison = compareCandidate(services.getProject(), candidate, services.getActiveScenario());
-      services.publishCandidateComparison(comparison);
-      return comparison;
-    }),
-  });
-
-  await register({
-    name: 'apply_candidate',
-    title: 'Apply current candidate',
-    description: 'Commits the currently visible candidate commands to the local canonical project after verifying the candidate base model hash. This mutates project state and clears the candidate.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    annotations: { readOnlyHint: false },
-    execute: activityWrapper(services, 'apply_candidate', false, (result) => {
-      const project = result as NetworkProject;
-      return `applied · model ${modelHash(project)}`;
-    }, async () => {
-      const candidate = services.getCandidate();
-      if (!candidate) throw new Error('No candidate exists.');
-      const nextProject = applyCandidatePlan(services.getProject(), candidate);
-      services.setProject(nextProject);
-      services.setCandidate(null);
-      services.publishCandidateComparison(null);
-      services.publishCapacityAnalysis(runScenarioCapacityAnalysis(nextProject, services.getActiveScenario()));
-      return nextProject;
-    }),
-  });
-
-  await register({
-    name: 'discard_candidate',
-    title: 'Discard current candidate',
-    description: 'Removes the visible candidate plan without changing the canonical project.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    annotations: { readOnlyHint: false },
-    execute: activityWrapper(services, 'discard_candidate', false, () => 'candidate discarded', async () => {
-      if (!services.getCandidate()) throw new Error('No candidate exists.');
-      services.setCandidate(null);
-      services.publishCandidateComparison(null);
-      return { discarded: true, modelHash: modelHash(services.getProject()) };
-    }),
-  });
-
-  return () => controller.abort();
+export async function registerBaseTools(context: ModelContextLike, services: InfraTwinToolServices): Promise<() => void> {
+  const disposeCore = await registerCoreTools(context, services);
+  const disposeResilience = await registerResilienceTools(context, services);
+  return () => { disposeResilience(); disposeCore(); };
 }
 
 export async function registerInspectNetworkTool(context: ModelContextLike, getProject: () => NetworkProject): Promise<() => void> {
   const controller = new AbortController();
   await context.registerTool({
-    name: 'inspect_network',
-    title: 'Inspect current network',
+    name: 'inspect_network', title: 'Inspect current network',
     description: 'Reads the currently open InfraTwin network and returns a compact deterministic topology/capacity summary. It does not modify project state.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    annotations: { readOnlyHint: true },
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true },
     execute: async () => inspectNetwork(getProject()),
   }, { signal: controller.signal });
   return () => controller.abort();

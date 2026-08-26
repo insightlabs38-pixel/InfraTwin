@@ -1,96 +1,104 @@
 # InfraTwin
 
-InfraTwin is a browser-native network decision digital twin for change safety, capacity planning, and resilience. The deterministic application model is shared by the human UI and WebMCP tools; agent orchestration never replaces solver truth.
+InfraTwin is a browser-native network decision digital twin for change safety, capacity planning, and resilience. Human edits, deterministic solvers, evidence overlays, and WebMCP agents all operate on the same canonical browser state.
 
-## Current status: Level 1 complete contender
+## Current status: Level 2 green contender
 
-Level 1 is implemented as a zero-function, local-first workbench:
+Level 2 implements the resilience gate from the planning pack:
 
-- polished topology workspace with utilization, failure, candidate, route, and evidence states;
-- three deterministic bundled demos plus a blank/import path;
-- non-destructive `ScenarioPatch` simulation over the canonical project;
-- deterministic single-shortest-path routing and capacity/service-target analysis;
-- stepped growth analysis with reproducible first-failure threshold;
-- sequential single-link N-1 resilience enumeration with ranked impact scoring and counterexample replay;
-- stale-safe candidate plans with before/after compare, explicit apply, and discard;
-- human canonical edits followed by fresh agent inspection of the same live state;
-- evidence witnesses that select/highlight the same links and routes shown in the graph;
-- import/export of canonical project JSON and exact bundled-demo reset;
-- visible WebMCP activity inspector with read-only/mutating classification and registered capability list;
-- graceful operation when WebMCP is unavailable;
-- reference/golden tests covering maintenance, growth, resilience, candidate safety, and WebMCP state sharing.
+- deterministic **ECMP** routing with equal split across all equal-cost shortest paths;
+- single-link N-1 enumeration over immutable model/scenario snapshots;
+- bounded browser Web Worker pool with deterministic async fallback;
+- live progress, user/agent cancellation, scenario/runtime/worker limits, and cancellation-safe results;
+- stale-result protection using both model and scenario hashes before publication;
+- deterministic worst-contingency ranking with displayed score components;
+- counterexample replay onto the shared topology workspace;
+- max-flow/min-cut bottleneck analysis with stable cut-edge IDs;
+- compute capability detection and graceful fallback when Workers, SharedArrayBuffer, or cross-origin isolation are unavailable;
+- state-derived WebMCP registration groups with independent `AbortSignal` lifetimes;
+- violation tools (`inspect_violation`, `show_counterexample`, `find_bottlenecks`) that only appear when failure evidence exists;
+- candidate tools that only appear while a candidate exists;
+- browser-local safety limits for imported model size and heavy analysis resources;
+- Level 0/1 regression coverage plus Level 2 ECMP, min-cut, N-1, worker, cancellation, stale-job, compute, and WebMCP eval tests;
+- a reproducible 50-node / 120-link / 60-demand / 120-contingency benchmark.
 
-The routing model is intentionally **single deterministic shortest path by link weight**. Equal-cost ties are resolved by a stable path signature. This is routing/capacity planning simulation, not router-protocol or packet-level QoS emulation.
+SharedArrayBuffer and Rust/WASM are intentionally **not required** at Level 2. The recorded TypeScript benchmark is already acceptable for the target demo scale, so no unmeasured accelerator claim is made.
+
+## Routing semantics
+
+Bundled scenarios use `routingProfile.mode = "ecmp"`.
+
+For each demand, InfraTwin finds the shortest path cost by positive link weight and splits the demand equally across every equal-cost shortest path. Aggregate link load is the sum of each demand's fractional flow. The implementation exposes both a stable representative path and the complete per-link flow fractions used for capacity analysis.
+
+`single-shortest-path` remains supported for Level 0 compatibility. ECMP projects require strictly positive weights so the equal-cost shortest-path graph remains acyclic and deterministic.
 
 ## Bundled demos
 
 ### Maintenance Trap
 
-Healthy baseline. Simulating CHI–DAL maintenance reroutes gold traffic across DEN–ATL and pushes `L3` to 120%. A deterministic capacity candidate raises `L3` to 15 Gbps and restores the modeled service target without mutating the baseline until apply.
-
-Suggested prompt:
-
-> Can I take the Chicago–Dallas link down for maintenance without violating critical-service constraints? Don’t apply any changes.
+Baseline PASS. Simulating CHI–DAL maintenance reroutes gold traffic across DEN–ATL and pushes `L3` to 120%. A capacity candidate raises `L3` to 15 Gbps and restores the modeled target.
 
 ### Growth Wall
 
-The east–west core is healthy at 60%. Scaling selected east→west demands to +40% pushes `G2` to 84%; the first modeled service-target failure appears at 1.35×. The bundled upgrade ladder yields a 22 Gbps capacity candidate that restores at least 20% headroom.
-
-Suggested prompt:
-
-> If east-to-west demand grows 40%, what becomes the first bottleneck, and what is the cheapest upgrade plan that keeps at least 20% headroom?
+Baseline east–west core is 60%. +40% growth pushes `G2` to 84%; first modeled service-target failure appears at 1.35×. The deterministic candidate raises `G2` to 22 Gbps and restores at least 20% headroom.
 
 ### Resilience Gap
 
-The baseline appears redundant. Sequential single-link N-1 analysis ranks `R2` as the worst failure; it reroutes premium traffic onto `R4`/`R5`, driving both to 110%. A two-link candidate upgrades the southern corridor to 14 Gbps and makes the replay pass the modeled gold target.
-
-Suggested prompt:
-
-> Find the worst single-link failure and tell me exactly what it breaks. Then propose the cheapest mitigation, but don’t apply it.
+Bounded N-1 ranks `R2` as the worst link failure. Counterexample replay reroutes premium traffic onto `R4`/`R5`, both reaching 110%. Min-cut evidence maps bottleneck edges directly to graph IDs. The existing two-link capacity candidate restores the modeled target.
 
 ## Run
 
 Requires Node.js 22+.
 
 ```bash
-npm install
+npm ci
 npm test
 npm run typecheck
+npm run build
 npm run dev
 ```
 
 Open `http://localhost:3000`.
 
-Production build:
+Medium benchmark:
 
 ```bash
-npm run build
+npm run benchmark:level2
 ```
 
-## WebMCP
+## Level 2 WebMCP capability states
 
-InfraTwin feature-detects `document.modelContext`. In a supported browser/agent environment it registers semantic engineering tools against public application services, not DOM operations.
+InfraTwin feature-detects `document.modelContext` and registers semantic engineering tools against public application services, never DOM automation.
 
-Base tools:
+Always-on core tools for a valid project:
 
-- `inspect_network` — read-only current topology/scenario/capacity summary;
-- `inspect_demands` — read-only demand, class, and routed-path summary;
-- `simulate_change` — read-only relative to the persistent project; creates an ephemeral visible scenario;
-- `run_capacity_analysis` — read-only deterministic capacity/service-target analysis;
-- `run_contingencies` — read-only single-link N-1 enumeration and worst-case replay;
-- `propose_change` — creates a visible candidate branch but does not apply it.
+- `inspect_network`
+- `inspect_demands`
+- `simulate_change`
+- `run_capacity_analysis`
+- `propose_change`
 
-When a candidate exists, InfraTwin additionally registers:
+When the current network supports N-1 analysis:
 
-- `compare_candidate` — read-only before/after metrics;
-- `apply_candidate` — mutating, stale-hash checked project commit;
-- `discard_candidate` — mutating candidate-state removal without project change.
+- `run_contingencies`
 
-Read-only annotations are applied to investigation/simulation tools. Registrations are scoped with `AbortSignal`, and every tool call is surfaced in the ordinary Agent Activity inspector with status, duration, classification, and compact result summary. Lack of WebMCP support does not block the engineering workbench.
+When current evidence is FAIL:
 
-## Deterministic evidence contract
+- `inspect_violation`
+- `show_counterexample`
+- `find_bottlenecks`
 
-Capacity, growth, and contingency results carry:
+When a candidate exists:
+
+- `compare_candidate`
+- `apply_candidate`
+- `discard_candidate`
+
+Each capability group has its own registration-scoped `AbortController`; leaving the corresponding state revokes that group cleanly. `run_contingencies` propagates the execution `AbortSignal` into the worker/fallback runner. Cancellation is surfaced as cancellation, never PASS.
+
+## N-1 evidence contract
+
+Contingency results include:
 
 ```text
 verdict
@@ -98,27 +106,44 @@ modelHash
 scenarioHash
 solver id/version
 assumptions[]
-metrics{}
+metrics {
+  totalEligibleScenarios
+  completedScenarios
+  workerCount
+  executionMode
+  status
+  worstLinkId
+  worstScore
+  ...
+}
 violations[]
 witnesses[]
 runtimeMs
 ```
 
-Failures include concrete stable-ID witnesses such as the disabled/overloaded link or the affected demand route. Candidate application is separate from analysis and proposal.
+Ranking is deterministic and explicitly defined as:
+
+```text
+1000 * criticalUnsatisfiedGbps
++ 100 * totalUnsatisfiedGbps
++ 10 * severeOverloadGbps
++ maxUtilizationPercent
+```
+
+The score is a demo planning heuristic, not a universal reliability metric.
 
 ## Repository layout
 
 ```text
-apps/web                 Next.js workbench and shared human/agent UI
-packages/model           canonical model, scenario patches, commands, candidates, hashing
-packages/graph-engine    deterministic shortest-path routing + link utilization
-packages/evidence        capacity, growth, N-1, evidence, candidate comparison/mitigation
-packages/webmcp          semantic browser capability adapter and activity telemetry
+apps/web                 Next.js workbench + real contingency Web Worker
+packages/model           canonical model, validation, scenario/candidate semantics
+packages/graph-engine    shortest path, ECMP, utilization, components, min-cut
+packages/evidence        capacity/growth/N-1 orchestration, cancellation, evidence
+packages/webmcp          state-derived semantic tool registration + activity telemetry
 packages/scenarios       Maintenance Trap, Growth Wall, Resilience Gap, blank project
-tests                    Level 0 references + Level 1 golden/product/tool tests
-planning                 governing planning pack
+benchmarks               reproducible Level 2 medium benchmark
+tests                    Level 0/1 regressions + Level 2 references/evals
+planning                 governing planning pack + implementation status/benchmark record
 ```
 
-## Planning precedence
-
-See `planning/README.md`. The copied planning pack is the implementation baseline and its document-precedence rules govern changes.
+See `planning/README.md` for planning precedence and `planning/LEVEL2_IMPLEMENTATION_STATUS.md` for the Level 2 gate mapping.
