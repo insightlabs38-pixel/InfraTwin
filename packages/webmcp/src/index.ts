@@ -13,6 +13,7 @@ import {
   type EvidenceRef,
   type Violation,
 } from '../../evidence/src/index.ts';
+import type { CapacityOptimizationResult, CapacityPlanRequirements, CandidateVerification, TrafficAllocationResult } from '../../optimizer/src/index.ts';
 
 export interface InspectNetworkSummary {
   projectId: string;
@@ -91,6 +92,11 @@ export interface InfraTwinToolServices {
   getCandidate(): CandidatePlan | null;
   setCandidate(candidate: CandidatePlan | null): void;
   publishCandidateComparison(comparison: CandidateComparison | null): void;
+  optimizeCapacity?(requirements: CapacityPlanRequirements, options?: ToolExecuteOptions): Promise<CapacityOptimizationResult>;
+  optimizeRouting?(options?: ToolExecuteOptions): Promise<TrafficAllocationResult>;
+  verifyCandidate?(candidate: CandidatePlan, requirements: CapacityPlanRequirements, options?: ToolExecuteOptions): Promise<CandidateVerification>;
+  publishOptimizationResult?(result: CapacityOptimizationResult | null): void;
+  publishCandidateVerification?(result: CandidateVerification | null): void;
   onActivity(event: ToolActivityEvent): void;
 }
 
@@ -98,6 +104,7 @@ export const CORE_TOOL_NAMES = ['inspect_network', 'inspect_demands', 'simulate_
 export const RESILIENCE_TOOL_NAMES = ['run_contingencies'] as const;
 export const VIOLATION_TOOL_NAMES = ['inspect_violation', 'show_counterexample', 'find_bottlenecks'] as const;
 export const CANDIDATE_TOOL_NAMES = ['compare_candidate', 'apply_candidate', 'discard_candidate'] as const;
+export const OPTIMIZER_TOOL_NAMES = ['optimize_capacity_plan', 'optimize_routing', 'verify_candidate'] as const;
 export const BASE_TOOL_NAMES = [...CORE_TOOL_NAMES, ...RESILIENCE_TOOL_NAMES] as const;
 
 function round(value: number): number { return Math.round(value * 1000) / 1000; }
@@ -442,6 +449,77 @@ export async function registerCandidateTools(context: ModelContextLike, services
       execute: activityWrapper(services, 'discard_candidate', false, () => 'candidate discarded', async () => {
         if (!services.getCandidate()) throw new Error('No candidate exists.');
         services.setCandidate(null); services.publishCandidateComparison(null); return { discarded: true, modelHash: modelHash(services.getProject()) };
+      }),
+    },
+  ];
+  return registerGroup(context, tools);
+}
+
+function optimizerScenarioRequirements(services: InfraTwinToolServices, input: Record<string, unknown>): CapacityPlanRequirements {
+  const scenarioPatches: ScenarioPatch[] = [];
+  const active = services.getActiveScenario();
+  if (active) scenarioPatches.push(active);
+  const topCount = Math.max(0, Math.min(10, Number(input.includeTopContingencies ?? 0)));
+  const contingencies = services.getContingencyAnalysis?.();
+  for (const item of contingencies?.cases.slice(0, topCount) ?? []) {
+    if (!scenarioPatches.some((patch) => scenarioHash(patch) === scenarioHash(item.patch))) scenarioPatches.push(item.patch);
+  }
+  return {
+    targetUtilizationPct: input.targetUtilizationPct === undefined ? 80 : Number(input.targetUtilizationPct),
+    budgetCostUnits: input.budgetCostUnits === undefined ? undefined : Number(input.budgetCostUnits),
+    includeBaseline: input.includeBaseline === undefined ? true : Boolean(input.includeBaseline),
+    scenarioPatches,
+  };
+}
+
+export async function registerOptimizerTools(context: ModelContextLike, services: InfraTwinToolServices): Promise<() => void> {
+  const tools: WebMCPTool[] = [
+    {
+      name: 'optimize_capacity_plan', title: 'Find minimum-cost capacity mitigation',
+      description: 'Runs the browser-local HiGHS WASM capacity MILP against the current model, active scenario, and optionally top N-1 cases. Returns a candidate plan only; it never applies changes.',
+      inputSchema: { type: 'object', properties: {
+        targetUtilizationPct: { type: 'number', exclusiveMinimum: 0, maximum: 100 },
+        budgetCostUnits: { type: 'number', minimum: 0 }, includeBaseline: { type: 'boolean' },
+        includeTopContingencies: { type: 'integer', minimum: 0, maximum: 10 }, timeLimitMs: { type: 'integer', minimum: 50, maximum: 30000 },
+      }, additionalProperties: false }, annotations: { readOnlyHint: false },
+      execute: activityWrapper(services, 'optimize_capacity_plan', false, (result) => {
+        const row = result as CapacityOptimizationResult; return `${row.diagnostics.status} · ${row.diagnostics.proof} · ${row.selectedUpgrades.length} upgrade(s) · objective ${row.diagnostics.objectiveValue ?? 'n/a'}`;
+      }, async (input, options) => {
+        if (!services.optimizeCapacity) throw new Error('Optimizer is not loaded in the application.');
+        const requirements = optimizerScenarioRequirements(services, input);
+        const result = await services.optimizeCapacity(requirements, { signal: options?.signal });
+        assertNotAborted(options?.signal);
+        services.publishOptimizationResult?.(result);
+        if (result.candidate) { services.setCandidate(result.candidate); services.publishCandidateComparison(null); services.publishCandidateVerification?.(null); }
+        return result;
+      }),
+    },
+    {
+      name: 'optimize_routing', title: 'Solve traffic allocation LP',
+      description: 'Runs a HiGHS flow-allocation LP on the current network snapshot and returns minimum possible maximum utilization plus per-link flow evidence. It does not mutate the project.',
+      inputSchema: { type: 'object', properties: { timeLimitMs: { type: 'integer', minimum: 50, maximum: 30000 } }, additionalProperties: false }, annotations: { readOnlyHint: true },
+      execute: activityWrapper(services, 'optimize_routing', true, (result) => {
+        const row = result as TrafficAllocationResult; return `${row.diagnostics.status} · max utilization ${row.maxUtilizationPct ?? 'n/a'}% · ${row.allocations.length} flow rows`;
+      }, async (_input, options) => {
+        if (!services.optimizeRouting) throw new Error('Optimizer is not loaded in the application.');
+        return services.optimizeRouting({ signal: options?.signal });
+      }),
+    },
+    {
+      name: 'verify_candidate', title: 'Independently verify optimizer candidate',
+      description: 'Checks the visible candidate without trusting the optimizer result: recomputes declared upgrade cost and replays baseline/selected scenarios. Any disagreement blocks verified status.',
+      inputSchema: { type: 'object', properties: {
+        targetUtilizationPct: { type: 'number', exclusiveMinimum: 0, maximum: 100 }, budgetCostUnits: { type: 'number', minimum: 0 },
+        includeBaseline: { type: 'boolean' }, includeTopContingencies: { type: 'integer', minimum: 0, maximum: 10 },
+      }, additionalProperties: false }, annotations: { readOnlyHint: true },
+      execute: activityWrapper(services, 'verify_candidate', true, (result) => {
+        const row = result as CandidateVerification; return `${row.status} · cost ${row.calculatedCost ?? 'n/a'} · ${row.violations.length} disagreement(s)`;
+      }, async (input, options) => {
+        const candidate = services.getCandidate(); if (!candidate) throw new Error('No candidate exists.');
+        if (!services.verifyCandidate) throw new Error('Independent verifier is not loaded in the application.');
+        const requirements = optimizerScenarioRequirements(services, input);
+        const result = await services.verifyCandidate(candidate, requirements, { signal: options?.signal });
+        services.publishCandidateVerification?.(result); return result;
       }),
     },
   ];

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CandidatePlan, NetworkProject, ScenarioPatch } from '@infratwin/model';
-import { applyCandidatePlan, cloneProject, modelHash, scenarioHash, validateNetworkProject } from '@infratwin/model';
+import { applyCandidatePlan, applyScenario, cloneProject, invertCandidatePlan, modelHash, scenarioHash, validateNetworkProject } from '@infratwin/model';
 import {
   analyzeBottleneck,
   assertContingencyFresh,
@@ -24,13 +24,17 @@ import {
   type CapacityAnalysis,
 } from '@infratwin/evidence';
 import { getScenarioDefinition, listBundledScenarios, loadScenario, type BundledScenarioId, type ScenarioDefinition } from '@infratwin/scenarios';
+import type { CapacityOptimizationResult, CapacityPlanRequirements, CandidateVerification, TrafficAllocationResult } from '@infratwin/optimizer';
+import { optimizeCapacityInBrowser, optimizeRoutingInBrowser, probeBrowserOptimizer, verifyCandidateInBrowser } from '../lib/optimizer-client';
 import {
   CANDIDATE_TOOL_NAMES,
+  OPTIMIZER_TOOL_NAMES,
   CORE_TOOL_NAMES,
   RESILIENCE_TOOL_NAMES,
   VIOLATION_TOOL_NAMES,
   registerCandidateTools,
   registerCoreTools,
+  registerOptimizerTools,
   registerResilienceTools,
   registerViolationTools,
   type InfraTwinToolServices,
@@ -89,8 +93,17 @@ export function Workbench() {
   const [progress, setProgress] = useState<ContingencyProgress | null>(null);
   const [resilienceStatus, setResilienceStatus] = useState<'idle' | 'running' | 'complete' | 'cancelled' | 'error'>('idle');
   const [resilienceMessage, setResilienceMessage] = useState('');
+  const [optimizerStatus, setOptimizerStatus] = useState<'loading' | 'ready' | 'running' | 'error'>('loading');
+  const [optimizerMessage, setOptimizerMessage] = useState('Loading HiGHS WASM in a worker…');
+  const [optimizerResult, setOptimizerResult] = useState<CapacityOptimizationResult | null>(null);
+  const [routingOptimization, setRoutingOptimization] = useState<TrafficAllocationResult | null>(null);
+  const [candidateVerification, setCandidateVerification] = useState<CandidateVerification | null>(null);
+  const [optimizerBudget, setOptimizerBudget] = useState<number>(20);
+  const [optimizerRequirements, setOptimizerRequirements] = useState<CapacityPlanRequirements | null>(null);
+  const [undoCandidate, setUndoCandidate] = useState<CandidatePlan | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const directRunControllerRef = useRef<AbortController | null>(null);
+  const optimizerControllerRef = useRef<AbortController | null>(null);
 
   const projectRef = useRef(project);
   const patchRef = useRef(activePatch);
@@ -102,6 +115,11 @@ export function Workbench() {
   contingencyRef.current = contingencies;
 
   useEffect(() => { setCompute(detectComputeCapabilities()); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    probeBrowserOptimizer(controller.signal).then((probe) => { setOptimizerStatus('ready'); setOptimizerMessage(`${probe.solver} ${probe.solverVersion} · ${probe.status}`); }).catch((error) => { if (error instanceof Error && error.name === 'AbortError') return; setOptimizerStatus('error'); setOptimizerMessage(error instanceof Error ? error.message : 'HiGHS WASM failed to load.'); });
+    return () => controller.abort();
+  }, []);
 
   const definition = useMemo<ScenarioDefinition>(() => {
     if (selectedScenarioId === 'imported') {
@@ -169,6 +187,11 @@ export function Workbench() {
     getCandidate: () => candidateRef.current,
     setCandidate: (next) => setCandidate(next),
     publishCandidateComparison: (next) => setComparison(next),
+    optimizeCapacity: (requirements, options) => optimizeCapacityInBrowser(projectRef.current, requirements, 8_000, options?.signal),
+    optimizeRouting: (options) => optimizeRoutingInBrowser(applyScenario(projectRef.current, patchRef.current), 5_000, options?.signal),
+    verifyCandidate: (nextCandidate, requirements, options) => verifyCandidateInBrowser(projectRef.current, nextCandidate, requirements, options?.signal),
+    publishOptimizationResult: (next) => setOptimizerResult(next),
+    publishCandidateVerification: (next) => setCandidateVerification(next),
     onActivity: (event) => setActivity((current) => [event, ...current].slice(0, 20)),
   // executeContingencies intentionally reads refs so the service object remains stable for registration lifetimes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -210,6 +233,19 @@ export function Workbench() {
     return () => { active = false; cleanup?.(); setRegisteredTools((current) => current.filter((name) => !names.includes(name))); };
   }, [hasViolation, toolServices]);
 
+  const optimizerReady = optimizerStatus === 'ready' || optimizerStatus === 'running';
+  useEffect(() => {
+    const names = OPTIMIZER_TOOL_NAMES as readonly string[];
+    if (!optimizerReady) { setRegisteredTools((current) => current.filter((name) => !names.includes(name))); return; }
+    const context = (document as Document & { modelContext?: ModelContextLike }).modelContext;
+    if (!context?.registerTool) return;
+    let cleanup: (() => void) | undefined; let active = true;
+    registerOptimizerTools(context, toolServices).then((dispose) => {
+      if (!active) dispose(); else { cleanup = dispose; setRegisteredTools((current) => [...new Set([...current, ...OPTIMIZER_TOOL_NAMES])]); }
+    }).catch(() => setWebmcpStatus('error'));
+    return () => { active = false; cleanup?.(); setRegisteredTools((current) => current.filter((name) => !names.includes(name))); };
+  }, [optimizerReady, toolServices]);
+
   useEffect(() => {
     const names = CANDIDATE_TOOL_NAMES as readonly string[];
     if (!candidate) { setRegisteredTools((current) => current.filter((name) => !names.includes(name))); return; }
@@ -227,7 +263,7 @@ export function Workbench() {
     cancelDirectRun();
     if (!keepPatch) setActivePatch(null);
     setCandidate(null); setComparison(null); setGrowth(null); setContingencies(null); setBottleneck(null); setSelectedEvidence(null); setLastToolAnalysis('');
-    setProgress(null); setResilienceStatus('idle'); setResilienceMessage('');
+    setProgress(null); setResilienceStatus('idle'); setResilienceMessage(''); setOptimizerResult(null); setRoutingOptimization(null); setCandidateVerification(null); setOptimizerRequirements(null); setUndoCandidate(null);
   };
 
   const loadDemo = (id: BundledScenarioId) => {
@@ -278,12 +314,43 @@ export function Workbench() {
     setBottleneck(next); setSelectedEvidence(next.evidence);
   };
 
-  const proposeMitigation = () => { setCandidate(proposeCapacityMitigation(project, activePatch, 20)); setComparison(null); };
+  const proposeMitigation = () => { setCandidate(proposeCapacityMitigation(project, activePatch, 20)); setComparison(null); setOptimizerResult(null); setCandidateVerification(null); };
   const compareCurrentCandidate = () => { if (candidate) setComparison(compareCandidate(project, candidate, activePatch)); };
+  const selectedOptimizerScenarios = (): ScenarioPatch[] => activePatch ? [activePatch] : [];
+  const runOptimizer = async () => {
+    optimizerControllerRef.current?.abort();
+    const controller = new AbortController(); optimizerControllerRef.current = controller;
+    const requirements: CapacityPlanRequirements = { targetUtilizationPct: 80, budgetCostUnits: optimizerBudget, includeBaseline: true, scenarioPatches: selectedOptimizerScenarios() };
+    setOptimizerRequirements(requirements); setOptimizerStatus('running'); setOptimizerMessage('Solving capacity MILP off the main thread…'); setOptimizerResult(null); setCandidateVerification(null);
+    try {
+      const result = await optimizeCapacityInBrowser(project, requirements, 8_000, controller.signal);
+      setOptimizerResult(result); if (result.candidate) { setCandidate(result.candidate); setComparison(null); }
+      setOptimizerStatus('ready'); setOptimizerMessage(`${result.diagnostics.status} · ${result.diagnostics.proof} · ${result.diagnostics.runtimeMs} ms`);
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') { setOptimizerStatus('ready'); setOptimizerMessage('Optimizer run cancelled; no candidate was published.'); }
+      else { setOptimizerStatus('error'); setOptimizerMessage(error instanceof Error ? error.message : 'Optimizer failed.'); }
+    } finally { if (optimizerControllerRef.current === controller) optimizerControllerRef.current = null; }
+  };
+  const runRoutingOptimizer = async () => {
+    const controller = new AbortController();
+    try { const result = await optimizeRoutingInBrowser(applyScenario(project, activePatch), 5_000, controller.signal); setRoutingOptimization(result); setOptimizerMessage(`Routing LP: ${result.diagnostics.status} · max ${result.maxUtilizationPct ?? 'n/a'}%`); }
+    catch (error) { setOptimizerMessage(error instanceof Error ? error.message : 'Routing LP failed.'); }
+  };
+  const verifyCurrentCandidate = async () => {
+    if (!candidate) return;
+    const requirements = optimizerRequirements ?? { targetUtilizationPct: 80, budgetCostUnits: optimizerBudget, includeBaseline: true, scenarioPatches: selectedOptimizerScenarios() };
+    try { const result = await verifyCandidateInBrowser(project, candidate, requirements); setCandidateVerification(result); }
+    catch (error) { setOptimizerMessage(error instanceof Error ? error.message : 'Candidate verification failed.'); }
+  };
   const applyCurrentCandidate = () => {
     if (!candidate) return;
-    try { setProject(applyCandidatePlan(project, candidate)); setCandidate(null); setComparison(null); }
+    try { const undo = invertCandidatePlan(project, candidate); setProject(applyCandidatePlan(project, candidate)); setUndoCandidate(undo); setCandidate(null); setComparison(null); setCandidateVerification(null); }
     catch (error) { setImportMessage(error instanceof Error ? error.message : 'Candidate could not be applied.'); }
+  };
+  const undoAppliedCandidate = () => {
+    if (!undoCandidate) return;
+    try { setProject(applyCandidatePlan(project, undoCandidate)); setUndoCandidate(null); setOptimizerResult(null); setRoutingOptimization(null); setCandidateVerification(null); }
+    catch (error) { setImportMessage(error instanceof Error ? error.message : 'Undo candidate is stale.'); }
   };
 
   const humanToggleLink = (linkId: string) => {
@@ -299,7 +366,7 @@ export function Workbench() {
   };
   const importProject = async (file: File) => {
     try {
-      if (file.size > 2_000_000) throw new Error('Project JSON exceeds the 2 MB Level 2 browser safety limit.');
+      if (file.size > 2_000_000) throw new Error('Project JSON exceeds the 2 MB browser safety limit.');
       const parsed = JSON.parse(await file.text()) as unknown; const validation = validateNetworkProject(parsed);
       if (!validation.valid) throw new Error(validation.errors.join('; '));
       const next = parsed as NetworkProject; resetSeedRef.current = cloneProject(next); setProject(cloneProject(next)); setSelectedScenarioId('imported');
@@ -324,9 +391,9 @@ export function Workbench() {
     <main className="shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">InfraTwin · Level 2 resilience engine</p>
+          <p className="eyebrow">InfraTwin · Level 3 optimization workbench</p>
           <h1>{project.name}</h1>
-          <p className="subtitle">Deterministic ECMP, cancellable worker-parallel N-1 analysis, min-cut evidence, and state-derived WebMCP capabilities over one canonical browser model.</p>
+          <p className="subtitle">Deterministic resilience plus browser-local HiGHS LP/MILP optimization, reversible candidate plans, independent verification, and state-derived WebMCP capabilities over one canonical model.</p>
         </div>
         <div className="header-actions">
           <span className={`status-chip ${analysis.result.verdict === 'PASS' ? 'pass' : 'fail'}`}>{analysis.result.verdict}</span>
@@ -342,7 +409,7 @@ export function Workbench() {
         <article><span>Model / scenario</span><strong className="mono">{shortHash(modelHash(project))} / {shortHash(scenarioHash(activePatch))}</strong></article>
         <article><span>Routing</span><strong>{analysis.routing.mode === 'ecmp' ? 'ECMP equal-cost split' : 'Single shortest path'}</strong></article>
         <article><span>Peak utilization</span><strong>{pct(peak)}</strong></article>
-        <article><span>Compute</span><strong>{compute.executionMode} · {compute.recommendedWorkerCount} slots</strong></article>
+        <article><span>Compute / optimizer</span><strong>{compute.executionMode} · HiGHS {optimizerStatus}</strong></article>
       </section>
 
       <section className="workbench-grid">
@@ -358,8 +425,12 @@ export function Workbench() {
             {definition.kind === 'growth' && <button className="primary" onClick={runGrowth}>Run +40% growth</button>}
             {definition.kind === 'resilience' && resilienceStatus !== 'running' && <button className="primary" onClick={() => void runResilience()}>Run worker N-1</button>}
             {resilienceStatus === 'running' && <button className="danger" onClick={cancelDirectRun}>Cancel N-1</button>}
+            {optimizerReady && optimizerStatus !== 'running' && <button onClick={() => void runRoutingOptimizer()}>Solve routing LP</button>}
+            {optimizerReady && optimizerStatus !== 'running' && <button className="primary" onClick={() => void runOptimizer()}>Find cheapest mitigation</button>}
+            {optimizerStatus === 'running' && <button className="danger" onClick={() => optimizerControllerRef.current?.abort()}>Cancel optimizer</button>}
           </div>
           {resilienceStatus !== 'idle' && <div className={`compute-card ${resilienceStatus}`}><span>N-1 execution</span><strong>{resilienceStatus} · {progressLabel}</strong><p>{resilienceMessage || `${progress?.running ?? 0} scenario(s) currently running.`}</p></div>}
+          <div className={`compute-card ${optimizerStatus === 'error' ? 'error' : optimizerStatus === 'running' ? 'running' : 'complete'}`}><span>Optimizer</span><strong>{optimizerStatus} · HiGHS WASM</strong><p>{optimizerMessage}</p><label className="number-control"><input aria-label="Optimizer budget cost units" type="number" min="0" step="1" value={optimizerBudget} onChange={(event) => setOptimizerBudget(Math.max(0, Number(event.target.value)))} /><em>budget</em></label></div>
           <div className="prompt-card"><span>Suggested agent prompt</span><p>{definition.suggestedPrompt}</p></div>
           <div className="assumptions-card"><span>Routing + compute contract</span><p>ECMP equally splits a demand across all equal-cost shortest paths. N-1 uses up to {compute.recommendedWorkerCount} bounded worker slots; SharedArrayBuffer is {compute.sharedArrayBufferSupported && compute.crossOriginIsolated ? 'available but not required' : 'not required / fallback active'}.</p></div>
         </aside>
@@ -393,7 +464,11 @@ export function Workbench() {
           {bottleneck && <div className="evidence-block cut-block"><span className="block-label">Min-cut evidence</span><strong>{bottleneck.sourceId} → {bottleneck.targetId}: {gbps(bottleneck.cut.cutCapacityGbps)}</strong><p>Cut links: {bottleneck.cut.cutLinkIds.join(', ') || 'none'} · requested direct demand {gbps(bottleneck.requestedDemandGbps)} · headroom {gbps(bottleneck.headroomGbps)}</p></div>}
           <div className="violation-list">{analysis.result.violations.length === 0 ? <p className="empty">PASS under the displayed ECMP/capacity assumptions.</p> : analysis.result.violations.map((violation) => <button className="violation" key={violation.id} onClick={() => selectViolation(violation)}><strong>{violation.type.replaceAll('_', ' ')}</strong><p>{violation.message}</p></button>)}</div>
           {analysis.result.verdict === 'FAIL' && <button className="wide" onClick={inspectCurrentBottleneck}>Find min-cut bottleneck</button>}
-          {candidate && <div className="candidate-card"><div className="candidate-title"><span>Candidate plan</span><strong>{candidate.name}</strong></div>{candidate.commands.map((command) => <p key={command.id}><span className="mono">{String(command.args.linkId)}</span> → {String(command.args.capacityGbps)} Gbps</p>)}<small>{candidate.objective.name}: {candidate.objective.value} {candidate.objective.unit}</small><div className="candidate-actions"><button onClick={compareCurrentCandidate}>Compare</button><button className="primary" onClick={applyCurrentCandidate}>Apply</button><button onClick={() => { setCandidate(null); setComparison(null); }}>Discard</button></div></div>}
+          {routingOptimization && <div className="evidence-block"><span className="block-label">Traffic allocation LP</span><strong>{routingOptimization.diagnostics.status} · {routingOptimization.diagnostics.proof}</strong><p>Minimum max utilization {routingOptimization.maxUtilizationPct === null ? 'n/a' : pct(routingOptimization.maxUtilizationPct)} · solver {routingOptimization.diagnostics.solver} {routingOptimization.diagnostics.solverVersion} · model {shortHash(routingOptimization.diagnostics.modelHash)}</p></div>}
+          {optimizerResult && <div className="evidence-block"><span className="block-label">Capacity MILP</span><strong>{optimizerResult.diagnostics.status} · {optimizerResult.diagnostics.proof}</strong><p>{optimizerResult.selectedUpgrades.length} upgrade(s) · objective {optimizerResult.diagnostics.objectiveValue ?? 'n/a'} · {optimizerResult.diagnostics.runtimeMs} ms · problem {shortHash(optimizerResult.diagnostics.problemHash)}</p>{optimizerResult.diagnostics.proof !== 'optimal' && <small>No optimality claim is shown without solver proof.</small>}</div>}
+          {candidateVerification && <div className={`comparison ${candidateVerification.status === 'verified' ? 'comparison-pass' : ''}`}><span>Independent candidate verification</span><strong>{candidateVerification.status === 'verified' ? 'VERIFIED' : 'DISAGREEMENT'}</strong><p>{candidateVerification.status === 'verified' ? `Cost ${candidateVerification.calculatedCost}; all selected scenarios satisfy constraints.` : candidateVerification.violations.join(' ')}</p></div>}
+          {undoCandidate && <button className="wide" onClick={undoAppliedCandidate}>Undo applied candidate</button>}
+          {candidate && <div className="candidate-card"><div className="candidate-title"><span>Candidate plan</span><strong>{candidate.name}</strong></div>{candidate.commands.map((command) => <p key={command.id}><span className="mono">{String(command.args.linkId)}</span> → {String(command.args.capacityGbps)} Gbps</p>)}<small>{candidate.objective.name}: {candidate.objective.value} {candidate.objective.unit}</small><div className="candidate-actions"><button onClick={compareCurrentCandidate}>Compare</button>{optimizerResult && <button onClick={() => void verifyCurrentCandidate()}>Verify</button>}<button className="primary" onClick={applyCurrentCandidate}>Apply</button><button onClick={() => { setCandidate(null); setComparison(null); }}>Discard</button></div></div>}
           {!candidate && analysis.result.verdict === 'FAIL' && <button className="wide primary" onClick={proposeMitigation}>Propose deterministic mitigation</button>}
           {comparison && <div className={`comparison ${comparison.after.result.verdict === 'PASS' ? 'comparison-pass' : ''}`}><span>Before → proposed</span><strong>{candidateBeforeAfter}</strong><p>Peak {pct(comparison.before.routing.peakUtilizationPct)} → {pct(comparison.after.routing.peakUtilizationPct)} · violations {comparison.before.result.violations.length} → {comparison.after.result.violations.length}</p></div>}
         </aside>
@@ -415,8 +490,8 @@ export function Workbench() {
 
         <article className="panel agent-panel">
           <div className="panel-heading"><div><p className="eyebrow">Agent activity / WebMCP inspector</p><h2>{registeredTools.length} state-derived capabilities</h2></div><span className={`status-dot ${webmcpStatus}`} /></div>
-          <div className="tool-badges">{registeredTools.map((name) => <span key={name} className={['propose_change', 'show_counterexample', 'apply_candidate', 'discard_candidate'].includes(name) ? 'mutating' : ''}>{name}</span>)}</div>
-          <p className="capability-note">Violation tools are registered only while failure evidence exists; candidate tools exist only while a candidate exists. Each group is revoked through its own AbortSignal.</p>
+          <div className="tool-badges">{registeredTools.map((name) => <span key={name} className={['propose_change', 'show_counterexample', 'apply_candidate', 'discard_candidate', 'optimize_capacity_plan'].includes(name) ? 'mutating' : ''}>{name}</span>)}</div>
+          <p className="capability-note">Violation and candidate capabilities still follow state. Level 3 optimizer tools appear only after the HiGHS worker probes successfully; every registration group is revoked through its own AbortSignal.</p>
           {lastToolAnalysis && <p className="tool-result">Latest tool-published analysis: {lastToolAnalysis}</p>}
           <div className="activity-list">{activity.length === 0 ? <p className="muted">Tool calls appear here with classification, duration, cancellation/error state, and compact result summaries.</p> : activity.map((event) => <div key={event.id} className="activity-row"><time>{event.startedAt.slice(11, 19)}</time><span className="activity-tool">{event.tool}</span><span className={`activity-kind ${event.readOnly ? 'readonly' : 'mutating'}`}>{event.readOnly ? 'read-only' : 'mutating'}</span><strong className={event.status}>{event.status === 'success' ? '✓' : event.status === 'cancelled' ? '■' : '✕'}</strong><small>{event.summary} · {event.durationMs} ms</small></div>)}</div>
         </article>

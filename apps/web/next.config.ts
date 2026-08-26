@@ -7,6 +7,7 @@ const nextConfig: NextConfig = {
     '@infratwin/evidence',
     '@infratwin/scenarios',
     '@infratwin/webmcp',
+    '@infratwin/optimizer',
   ],
 };
 

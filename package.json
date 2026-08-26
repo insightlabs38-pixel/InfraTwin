@@ -13,7 +13,8 @@
     "start": "npm run start --workspace @infratwin/web",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
-    "benchmark:level2": "node --experimental-strip-types benchmarks/level2-medium.ts"
+    "benchmark:level2": "node --experimental-strip-types benchmarks/level2-medium.ts",
+    "benchmark:level3": "node --experimental-strip-types benchmarks/level3-optimizer.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

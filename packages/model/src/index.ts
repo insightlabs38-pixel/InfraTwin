@@ -312,3 +312,30 @@ export function applyCandidatePlan(project: NetworkProject, candidate: Candidate
   }
   return candidate.commands.reduce((current, command) => applyModelCommand(current, command), project);
 }
+
+export function invertCandidatePlan(project: NetworkProject, candidate: CandidatePlan): CandidatePlan {
+  if (candidate.baseModelHash !== modelHash(project)) throw new Error('Candidate is stale because the project changed after it was proposed.');
+  const next = applyCandidatePlan(project, candidate);
+  const inverseCommands: ModelCommand[] = candidate.commands.map((command, index) => {
+    if (command.type === 'set_link_capacity') {
+      const linkId = String(command.args.linkId ?? '');
+      const link = project.links.find((item) => item.id === linkId);
+      if (!link) throw new Error(`Unknown link ${linkId}`);
+      return { id: `undo-${index}-${command.id}`, type: 'set_link_capacity', actor: 'human', args: { linkId, capacityGbps: link.capacityGbps }, createdAt: new Date(0).toISOString() };
+    }
+    if (command.type === 'set_link_availability') {
+      const linkId = String(command.args.linkId ?? '');
+      const link = project.links.find((item) => item.id === linkId);
+      if (!link) throw new Error(`Unknown link ${linkId}`);
+      return { id: `undo-${index}-${command.id}`, type: 'set_link_availability', actor: 'human', args: { linkId, available: link.available !== false }, createdAt: new Date(0).toISOString() };
+    }
+    if (command.type === 'set_demand_bandwidth') {
+      const demandId = String(command.args.demandId ?? '');
+      const demand = project.demands.find((item) => item.id === demandId);
+      if (!demand) throw new Error(`Unknown demand ${demandId}`);
+      return { id: `undo-${index}-${command.id}`, type: 'set_demand_bandwidth', actor: 'human', args: { demandId, bandwidthGbps: demand.bandwidthGbps }, createdAt: new Date(0).toISOString() };
+    }
+    throw new Error(`Candidate command ${command.type} is not reversibly supported.`);
+  }).reverse();
+  return { id: `undo:${candidate.id}`, name: `Undo ${candidate.name}`, baseModelHash: modelHash(next), commands: inverseCommands, objective: { name: 'undo', value: 0 }, rationaleEvidenceIds: [...candidate.rationaleEvidenceIds] };
+}

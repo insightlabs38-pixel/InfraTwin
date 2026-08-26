@@ -1,5 +1,5 @@
 {
-  "name": "@infratwin/webmcp",
+  "name": "@infratwin/optimizer",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,7 +7,6 @@
   "dependencies": {
     "@infratwin/model": "*",
     "@infratwin/graph-engine": "*",
-    "@infratwin/evidence": "*",
-    "@infratwin/optimizer": "*"
+    "highs": "1.15.2"
   }
 }
