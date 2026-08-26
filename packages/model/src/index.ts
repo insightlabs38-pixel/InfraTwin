@@ -101,12 +101,58 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
 const nonEmptyString = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
 const finiteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 
+export const MODEL_LIMITS = {
+  nodes: 500, links: 2000, demands: 2000, serviceClasses: 64, upgradeOptionsPerLink: 64,
+  idLength: 128, nameLength: 512, metadataDepth: 32, metadataEntries: 4096, metadataStringLength: 16_384,
+} as const;
+
+function rejectUnknownKeys(value: Record<string, unknown>, allowed: readonly string[], label: string, errors: string[]): void {
+  const allowedSet = new Set(allowed);
+  for (const key of Object.keys(value)) if (!allowedSet.has(key)) errors.push(`${label}.${key} is not a recognized canonical property`);
+}
+
+function validateMetadata(value: unknown, errors: string[]): void {
+  if (value === undefined) return;
+  if (!isRecord(value)) { errors.push('metadata must be an object'); return; }
+  const stack: Array<{ value: unknown; depth: number; path: string }> = [{ value, depth: 0, path: 'metadata' }];
+  let entries = 0;
+  while (stack.length) {
+    const item = stack.pop()!;
+    if (item.depth > MODEL_LIMITS.metadataDepth) { errors.push(`metadata nesting exceeds ${MODEL_LIMITS.metadataDepth}`); return; }
+    if (Array.isArray(item.value)) {
+      entries += item.value.length;
+      if (entries > MODEL_LIMITS.metadataEntries) { errors.push(`metadata contains more than ${MODEL_LIMITS.metadataEntries} entries`); return; }
+      item.value.forEach((child, index) => stack.push({ value: child, depth: item.depth + 1, path: `${item.path}[${index}]` }));
+    } else if (isRecord(item.value)) {
+      const keys = Object.keys(item.value);
+      entries += keys.length;
+      if (entries > MODEL_LIMITS.metadataEntries) { errors.push(`metadata contains more than ${MODEL_LIMITS.metadataEntries} entries`); return; }
+      for (const key of keys) {
+        if (key.length > MODEL_LIMITS.nameLength) errors.push(`${item.path} contains an overlong key`);
+        stack.push({ value: item.value[key], depth: item.depth + 1, path: `${item.path}.${key}` });
+      }
+    } else if (typeof item.value === 'string') {
+      if (item.value.length > MODEL_LIMITS.metadataStringLength) errors.push(`${item.path} string exceeds ${MODEL_LIMITS.metadataStringLength} characters`);
+    } else if (typeof item.value === 'number' && !Number.isFinite(item.value)) {
+      errors.push(`${item.path} must not contain non-finite numbers`);
+    } else if (typeof item.value === 'function' || typeof item.value === 'symbol' || typeof item.value === 'bigint' || item.value === undefined) {
+      errors.push(`${item.path} contains a value that is not JSON data`);
+    }
+  }
+}
+
+function checkBoundedString(value: unknown, max: number, label: string, errors: string[], optional = false): void {
+  if (optional && value === undefined) return;
+  if (!nonEmptyString(value)) { errors.push(`${label} must be non-empty`); return; }
+  if (value.length > max) errors.push(`${label} must be at most ${max} characters`);
+}
+
 export function validateNetworkProject(value: unknown): ValidationResult {
   const errors: string[] = [];
   if (!isRecord(value)) return { valid: false, errors: ['project must be an object'] };
   if (value.schemaVersion !== '0.1') errors.push('schemaVersion must equal 0.1');
-  if (!nonEmptyString(value.id)) errors.push('id must be a non-empty string');
-  if (!nonEmptyString(value.name)) errors.push('name must be a non-empty string');
+  checkBoundedString(value.id, MODEL_LIMITS.idLength, 'id', errors);
+  checkBoundedString(value.name, MODEL_LIMITS.nameLength, 'name', errors);
   if (!Array.isArray(value.nodes)) errors.push('nodes must be an array');
   if (!Array.isArray(value.links)) errors.push('links must be an array');
   if (!Array.isArray(value.demands)) errors.push('demands must be an array');
@@ -115,6 +161,8 @@ export function validateNetworkProject(value: unknown): ValidationResult {
     errors.push('routingProfile.mode must be single-shortest-path or ecmp');
   }
   if (errors.length) return { valid: false, errors };
+  rejectUnknownKeys(value, ['schemaVersion', 'id', 'name', 'nodes', 'links', 'demands', 'serviceClasses', 'routingProfile', 'metadata'], 'project', errors);
+  validateMetadata(value.metadata, errors);
 
   const nodes = value.nodes as unknown[];
   const links = value.links as unknown[];
@@ -125,18 +173,22 @@ export function validateNetworkProject(value: unknown): ValidationResult {
   const demandIds = new Set<string>();
   const classIds = new Set<string>();
 
-  if (nodes.length > 500) errors.push('nodes must contain at most 500 entries for browser-local analysis');
-  if (links.length > 2000) errors.push('links must contain at most 2000 entries for browser-local analysis');
-  if (demands.length > 2000) errors.push('demands must contain at most 2000 entries for browser-local analysis');
-  if (classes.length > 64) errors.push('serviceClasses must contain at most 64 entries');
-  const routingMode = (value.routingProfile as Record<string, unknown>).mode;
+  if (nodes.length > MODEL_LIMITS.nodes) errors.push(`nodes must contain at most ${MODEL_LIMITS.nodes} entries for browser-local analysis`);
+  if (links.length > MODEL_LIMITS.links) errors.push(`links must contain at most ${MODEL_LIMITS.links} entries for browser-local analysis`);
+  if (demands.length > MODEL_LIMITS.demands) errors.push(`demands must contain at most ${MODEL_LIMITS.demands} entries for browser-local analysis`);
+  if (classes.length > MODEL_LIMITS.serviceClasses) errors.push(`serviceClasses must contain at most ${MODEL_LIMITS.serviceClasses} entries`);
+  const routing = value.routingProfile as Record<string, unknown>;
+  rejectUnknownKeys(routing, ['mode'], 'routingProfile', errors);
+  const routingMode = routing.mode;
 
   nodes.forEach((node, index) => {
     if (!isRecord(node)) return void errors.push(`nodes[${index}] must be an object`);
-    if (!nonEmptyString(node.id)) errors.push(`nodes[${index}].id must be non-empty`);
-    else if (nodeIds.has(node.id)) errors.push(`duplicate node id ${node.id}`);
-    else nodeIds.add(node.id);
-    if (!nonEmptyString(node.name)) errors.push(`nodes[${index}].name must be non-empty`);
+    rejectUnknownKeys(node, ['id', 'name', 'region', 'type', 'available', 'x', 'y'], `nodes[${index}]`, errors);
+    checkBoundedString(node.id, MODEL_LIMITS.idLength, `nodes[${index}].id`, errors);
+    if (nonEmptyString(node.id)) { if (nodeIds.has(node.id)) errors.push(`duplicate node id ${node.id}`); else nodeIds.add(node.id); }
+    checkBoundedString(node.name, MODEL_LIMITS.nameLength, `nodes[${index}].name`, errors);
+    if (node.region !== undefined && typeof node.region !== 'string') errors.push(`nodes[${index}].region must be a string`);
+    if (node.type !== undefined && typeof node.type !== 'string') errors.push(`nodes[${index}].type must be a string`);
     if (node.available !== undefined && typeof node.available !== 'boolean') errors.push(`nodes[${index}].available must be boolean`);
     if (node.x !== undefined && !finiteNumber(node.x)) errors.push(`nodes[${index}].x must be finite`);
     if (node.y !== undefined && !finiteNumber(node.y)) errors.push(`nodes[${index}].y must be finite`);
@@ -144,11 +196,12 @@ export function validateNetworkProject(value: unknown): ValidationResult {
 
   classes.forEach((serviceClass, index) => {
     if (!isRecord(serviceClass)) return void errors.push(`serviceClasses[${index}] must be an object`);
-    if (!nonEmptyString(serviceClass.id)) errors.push(`serviceClasses[${index}].id must be non-empty`);
-    else if (classIds.has(serviceClass.id)) errors.push(`duplicate service class id ${serviceClass.id}`);
-    else classIds.add(serviceClass.id);
-    if (!nonEmptyString(serviceClass.name)) errors.push(`serviceClasses[${index}].name must be non-empty`);
+    rejectUnknownKeys(serviceClass, ['id', 'name', 'priority', 'maxUtilizationPct', 'allowShedding'], `serviceClasses[${index}]`, errors);
+    checkBoundedString(serviceClass.id, MODEL_LIMITS.idLength, `serviceClasses[${index}].id`, errors);
+    if (nonEmptyString(serviceClass.id)) { if (classIds.has(serviceClass.id)) errors.push(`duplicate service class id ${serviceClass.id}`); else classIds.add(serviceClass.id); }
+    checkBoundedString(serviceClass.name, MODEL_LIMITS.nameLength, `serviceClasses[${index}].name`, errors);
     if (!Number.isInteger(serviceClass.priority) || Number(serviceClass.priority) < 0) errors.push(`serviceClasses[${index}].priority must be a non-negative integer`);
+    if (serviceClass.allowShedding !== undefined && typeof serviceClass.allowShedding !== 'boolean') errors.push(`serviceClasses[${index}].allowShedding must be boolean`);
     if (!finiteNumber(serviceClass.maxUtilizationPct) || Number(serviceClass.maxUtilizationPct) <= 0 || Number(serviceClass.maxUtilizationPct) > 100) {
       errors.push(`serviceClasses[${index}].maxUtilizationPct must be in (0,100]`);
     }
@@ -156,31 +209,42 @@ export function validateNetworkProject(value: unknown): ValidationResult {
 
   links.forEach((link, index) => {
     if (!isRecord(link)) return void errors.push(`links[${index}] must be an object`);
-    if (!nonEmptyString(link.id)) errors.push(`links[${index}].id must be non-empty`);
-    else if (linkIds.has(link.id)) errors.push(`duplicate link id ${link.id}`);
-    else linkIds.add(link.id);
+    rejectUnknownKeys(link, ['id', 'source', 'target', 'bidirectional', 'capacityGbps', 'latencyMs', 'weight', 'available', 'upgradeOptions'], `links[${index}]`, errors);
+    checkBoundedString(link.id, MODEL_LIMITS.idLength, `links[${index}].id`, errors);
+    if (nonEmptyString(link.id)) { if (linkIds.has(link.id)) errors.push(`duplicate link id ${link.id}`); else linkIds.add(link.id); }
     if (!nonEmptyString(link.source) || !nodeIds.has(String(link.source))) errors.push(`links[${index}].source must reference a node`);
     if (!nonEmptyString(link.target) || !nodeIds.has(String(link.target))) errors.push(`links[${index}].target must reference a node`);
+    if (nonEmptyString(link.source) && nonEmptyString(link.target) && link.source === link.target) errors.push(`links[${index}] must not be a self-link`);
     if (!finiteNumber(link.capacityGbps) || Number(link.capacityGbps) <= 0) errors.push(`links[${index}].capacityGbps must be > 0`);
     if (!finiteNumber(link.weight) || Number(link.weight) < 0) errors.push(`links[${index}].weight must be >= 0`);
+    if (link.latencyMs !== undefined && (!finiteNumber(link.latencyMs) || Number(link.latencyMs) < 0)) errors.push(`links[${index}].latencyMs must be >= 0`);
     if (routingMode === 'ecmp' && finiteNumber(link.weight) && Number(link.weight) <= 0) errors.push(`links[${index}].weight must be > 0 when routingProfile.mode is ecmp`);
     if (link.bidirectional !== undefined && typeof link.bidirectional !== 'boolean') errors.push(`links[${index}].bidirectional must be boolean`);
     if (link.available !== undefined && typeof link.available !== 'boolean') errors.push(`links[${index}].available must be boolean`);
     if (link.upgradeOptions !== undefined) {
       if (!Array.isArray(link.upgradeOptions)) errors.push(`links[${index}].upgradeOptions must be an array`);
-      else link.upgradeOptions.forEach((option, optionIndex) => {
-        if (!isRecord(option) || !finiteNumber(option.capacityGbps) || Number(option.capacityGbps) <= Number(link.capacityGbps) || !finiteNumber(option.cost) || Number(option.cost) < 0) {
-          errors.push(`links[${index}].upgradeOptions[${optionIndex}] must have capacity above current capacity and non-negative cost`);
-        }
-      });
+      else {
+        if (link.upgradeOptions.length > MODEL_LIMITS.upgradeOptionsPerLink) errors.push(`links[${index}].upgradeOptions must contain at most ${MODEL_LIMITS.upgradeOptionsPerLink} entries`);
+        let priorCapacity = Number(link.capacityGbps);
+        link.upgradeOptions.forEach((option, optionIndex) => {
+          if (!isRecord(option) || !finiteNumber(option.capacityGbps) || Number(option.capacityGbps) <= Number(link.capacityGbps) || !finiteNumber(option.cost) || Number(option.cost) < 0) {
+            errors.push(`links[${index}].upgradeOptions[${optionIndex}] must have capacity above current capacity and non-negative cost`);
+            return;
+          }
+          rejectUnknownKeys(option, ['capacityGbps', 'cost'], `links[${index}].upgradeOptions[${optionIndex}]`, errors);
+          if (Number(option.capacityGbps) <= priorCapacity) errors.push(`links[${index}].upgradeOptions must use unique strictly increasing capacities`);
+          priorCapacity = Number(option.capacityGbps);
+        });
+      }
     }
   });
 
   demands.forEach((demand, index) => {
     if (!isRecord(demand)) return void errors.push(`demands[${index}] must be an object`);
-    if (!nonEmptyString(demand.id)) errors.push(`demands[${index}].id must be non-empty`);
-    else if (demandIds.has(demand.id)) errors.push(`duplicate demand id ${demand.id}`);
-    else demandIds.add(demand.id);
+    rejectUnknownKeys(demand, ['id', 'name', 'source', 'target', 'bandwidthGbps', 'serviceClassId'], `demands[${index}]`, errors);
+    checkBoundedString(demand.id, MODEL_LIMITS.idLength, `demands[${index}].id`, errors);
+    if (nonEmptyString(demand.id)) { if (demandIds.has(demand.id)) errors.push(`duplicate demand id ${demand.id}`); else demandIds.add(demand.id); }
+    if (demand.name !== undefined && (typeof demand.name !== 'string' || demand.name.length > MODEL_LIMITS.nameLength)) errors.push(`demands[${index}].name must be a string of at most ${MODEL_LIMITS.nameLength} characters`);
     if (!nonEmptyString(demand.source) || !nodeIds.has(String(demand.source))) errors.push(`demands[${index}].source must reference a node`);
     if (!nonEmptyString(demand.target) || !nodeIds.has(String(demand.target))) errors.push(`demands[${index}].target must reference a node`);
     if (!finiteNumber(demand.bandwidthGbps) || Number(demand.bandwidthGbps) < 0) errors.push(`demands[${index}].bandwidthGbps must be >= 0`);
@@ -203,9 +267,9 @@ function stableValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stableValue);
   if (isRecord(value)) {
     return Object.keys(value).sort().reduce<Record<string, unknown>>((out, key) => {
-      out[key] = stableValue(value[key]);
+      Object.defineProperty(out, key, { value: stableValue(value[key]), enumerable: true, configurable: true, writable: true });
       return out;
-    }, {});
+    }, Object.create(null) as Record<string, unknown>);
   }
   return value;
 }
@@ -271,9 +335,9 @@ function stripPresentationMetadata(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripPresentationMetadata);
   if (!isRecord(value)) return value;
   return Object.keys(value).sort().reduce<Record<string, unknown>>((out, key) => {
-    if (!PRESENTATION_METADATA_KEYS.has(key)) out[key] = stripPresentationMetadata(value[key]);
+    if (!PRESENTATION_METADATA_KEYS.has(key)) Object.defineProperty(out, key, { value: stripPresentationMetadata(value[key]), enumerable: true, configurable: true, writable: true });
     return out;
-  }, {});
+  }, Object.create(null) as Record<string, unknown>);
 }
 
 export function semanticProjectValue(project: NetworkProject): NetworkProject {

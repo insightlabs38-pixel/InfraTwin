@@ -14,6 +14,12 @@ export interface DemandRoute {
   linkIds: string[];
   totalWeight: number | null;
   paths: RoutePath[];
+  /** Exact number of equal-cost shortest paths. Kept as decimal text so very large DAG counts stay exact. */
+  equalCostPathCountExact: string;
+  /** Numeric path count when it is safely representable, otherwise null. */
+  equalCostPathCount: number | null;
+  materializedPathCount: number;
+  pathsTruncated: boolean;
   linkFractions: Record<string, number>;
 }
 
@@ -98,15 +104,30 @@ function dijkstra(adjacency: Map<string, AdjacencyEdge[]>, sourceId: string, rev
   return distance;
 }
 
+function pathCountFields(total: bigint, materialized: number) {
+  return {
+    equalCostPathCountExact: total.toString(),
+    equalCostPathCount: total <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(total) : null,
+    materializedPathCount: materialized,
+    pathsTruncated: total > BigInt(materialized),
+  };
+}
+
+function ratioBigInt(numerator: bigint, denominator: bigint): number {
+  if (denominator <= 0n) return 0;
+  const scale = 1_000_000_000_000_000n;
+  return Number((numerator * scale) / denominator) / 1_000_000_000_000_000;
+}
+
 function unreachableRoute(demandId: string): DemandRoute {
-  return { demandId, reachable: false, nodeIds: [], linkIds: [], totalWeight: null, paths: [], linkFractions: {} };
+  return { demandId, reachable: false, nodeIds: [], linkIds: [], totalWeight: null, paths: [], ...pathCountFields(0n, 0), linkFractions: {} };
 }
 
 export function shortestPath(project: NetworkProject, demand: DemandModel): DemandRoute {
   const { adjacency } = buildArcs(project);
   if (!adjacency.has(demand.source) || !adjacency.has(demand.target)) return unreachableRoute(demand.id);
   if (demand.source === demand.target) {
-    return { demandId: demand.id, reachable: true, nodeIds: [demand.source], linkIds: [], totalWeight: 0, paths: [{ nodeIds: [demand.source], linkIds: [], fraction: 1 }], linkFractions: {} };
+    return { demandId: demand.id, reachable: true, nodeIds: [demand.source], linkIds: [], totalWeight: 0, paths: [{ nodeIds: [demand.source], linkIds: [], fraction: 1 }], ...pathCountFields(1n, 1), linkFractions: {} };
   }
 
   const distance = new Map<string, number>();
@@ -161,6 +182,7 @@ export function shortestPath(project: NetworkProject, demand: DemandModel): Dema
     linkIds,
     totalWeight: distance.get(demand.target) ?? null,
     paths: [{ nodeIds, linkIds, fraction: 1 }],
+    ...pathCountFields(1n, 1),
     linkFractions,
   };
 }
@@ -169,7 +191,7 @@ export function ecmpRoute(project: NetworkProject, demand: DemandModel): DemandR
   const { adjacency, reverse } = buildArcs(project);
   if (!adjacency.has(demand.source) || !adjacency.has(demand.target)) return unreachableRoute(demand.id);
   if (demand.source === demand.target) {
-    return { demandId: demand.id, reachable: true, nodeIds: [demand.source], linkIds: [], totalWeight: 0, paths: [{ nodeIds: [demand.source], linkIds: [], fraction: 1 }], linkFractions: {} };
+    return { demandId: demand.id, reachable: true, nodeIds: [demand.source], linkIds: [], totalWeight: 0, paths: [{ nodeIds: [demand.source], linkIds: [], fraction: 1 }], ...pathCountFields(1n, 1), linkFractions: {} };
   }
   for (const edges of adjacency.values()) {
     if (edges.some((edge) => edge.weight <= 0)) throw new Error('ECMP routing requires strictly positive link weights to keep the shortest-path DAG acyclic.');
@@ -199,15 +221,15 @@ export function ecmpRoute(project: NetworkProject, demand: DemandModel): DemandR
     if (Math.abs(da - db) > EPSILON) return db - da;
     return b.localeCompare(a);
   });
-  const pathCount = new Map<string, number>();
-  pathCount.set(demand.target, 1);
+  const pathCount = new Map<string, bigint>();
+  pathCount.set(demand.target, 1n);
   for (const nodeId of nodesByDescendingDistance) {
     if (nodeId === demand.target) continue;
-    const count = (dag.get(nodeId) ?? []).reduce((sum, edge) => sum + (pathCount.get(edge.to) ?? 0), 0);
+    const count = (dag.get(nodeId) ?? []).reduce((sum, edge) => sum + (pathCount.get(edge.to) ?? 0n), 0n);
     pathCount.set(nodeId, count);
   }
-  const totalPaths = pathCount.get(demand.source) ?? 0;
-  if (totalPaths <= 0) return unreachableRoute(demand.id);
+  const totalPaths = pathCount.get(demand.source) ?? 0n;
+  if (totalPaths <= 0n) return unreachableRoute(demand.id);
 
   const nodeFlow = new Map<string, number>([[demand.source, 1]]);
   const linkFractions: Record<string, number> = {};
@@ -220,13 +242,13 @@ export function ecmpRoute(project: NetworkProject, demand: DemandModel): DemandR
   for (const nodeId of nodesByAscendingDistance) {
     const flow = nodeFlow.get(nodeId) ?? 0;
     if (flow <= EPSILON || nodeId === demand.target) continue;
-    const edges = (dag.get(nodeId) ?? []).filter((edge) => (pathCount.get(edge.to) ?? 0) > 0);
-    const denominator = edges.reduce((sum, edge) => sum + (pathCount.get(edge.to) ?? 0), 0);
-    if (denominator <= 0) continue;
+    const edges = (dag.get(nodeId) ?? []).filter((edge) => (pathCount.get(edge.to) ?? 0n) > 0n);
+    const denominator = edges.reduce((sum, edge) => sum + (pathCount.get(edge.to) ?? 0n), 0n);
+    if (denominator <= 0n) continue;
     for (const edge of edges) {
-      const fraction = flow * ((pathCount.get(edge.to) ?? 0) / denominator);
-      linkFractions[edge.linkId] = round((linkFractions[edge.linkId] ?? 0) + fraction);
-      nodeFlow.set(edge.to, round((nodeFlow.get(edge.to) ?? 0) + fraction));
+      const fraction = flow * ratioBigInt(pathCount.get(edge.to) ?? 0n, denominator);
+      linkFractions[edge.linkId] = (linkFractions[edge.linkId] ?? 0) + fraction;
+      nodeFlow.set(edge.to, (nodeFlow.get(edge.to) ?? 0) + fraction);
     }
   }
 
@@ -237,7 +259,7 @@ export function ecmpRoute(project: NetworkProject, demand: DemandModel): DemandR
   while (cursor !== demand.target) {
     if (seen.has(cursor)) return unreachableRoute(demand.id);
     seen.add(cursor);
-    const next = (dag.get(cursor) ?? []).find((edge) => (pathCount.get(edge.to) ?? 0) > 0);
+    const next = (dag.get(cursor) ?? []).find((edge) => (pathCount.get(edge.to) ?? 0n) > 0n);
     if (!next) return unreachableRoute(demand.id);
     primaryLinkIds.push(next.linkId);
     primaryNodeIds.push(next.to);
@@ -248,11 +270,11 @@ export function ecmpRoute(project: NetworkProject, demand: DemandModel): DemandR
   const enumerate = (nodeId: string, nodeIds: string[], linkIds: string[]) => {
     if (paths.length >= 64) return;
     if (nodeId === demand.target) {
-      paths.push({ nodeIds: [...nodeIds], linkIds: [...linkIds], fraction: round(1 / totalPaths) });
+      paths.push({ nodeIds: [...nodeIds], linkIds: [...linkIds], fraction: ratioBigInt(1n, totalPaths) });
       return;
     }
     for (const edge of dag.get(nodeId) ?? []) {
-      if ((pathCount.get(edge.to) ?? 0) <= 0) continue;
+      if ((pathCount.get(edge.to) ?? 0n) <= 0n) continue;
       enumerate(edge.to, [...nodeIds, edge.to], [...linkIds, edge.linkId]);
       if (paths.length >= 64) break;
     }
@@ -266,6 +288,7 @@ export function ecmpRoute(project: NetworkProject, demand: DemandModel): DemandR
     linkIds: primaryLinkIds,
     totalWeight: round(totalWeight),
     paths,
+    ...pathCountFields(totalPaths, paths.length),
     linkFractions,
   };
 }
@@ -277,13 +300,13 @@ export function routeProject(project: NetworkProject): RoutingResult {
   routes.forEach((route, index) => {
     if (!route.reachable) return;
     const demand = project.demands[index];
-    for (const [linkId, fraction] of Object.entries(route.linkFractions)) linkLoadsGbps[linkId] = round((linkLoadsGbps[linkId] ?? 0) + demand.bandwidthGbps * fraction);
+    for (const [linkId, fraction] of Object.entries(route.linkFractions)) linkLoadsGbps[linkId] = (linkLoadsGbps[linkId] ?? 0) + demand.bandwidthGbps * fraction;
   });
   const linkById = new Map<string, LinkModel>(project.links.map((link) => [link.id, link]));
   const linkUtilizationPct: Record<string, number> = {};
   for (const [linkId, load] of Object.entries(linkLoadsGbps)) {
     const link = linkById.get(linkId);
-    linkUtilizationPct[linkId] = link ? round((load / link.capacityGbps) * 100) : 0;
+    linkUtilizationPct[linkId] = link ? (load / link.capacityGbps) * 100 : 0;
   }
   return {
     mode: project.routingProfile.mode,

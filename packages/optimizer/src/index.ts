@@ -23,10 +23,21 @@ export interface SolverDiagnostics {
   message: string;
 }
 
+export interface TrafficAllocationVerification {
+  valid: boolean;
+  nonnegativeFlows: boolean;
+  flowConservation: boolean;
+  capacityConstraints: boolean;
+  objectiveConsistent: boolean;
+  computedMaxUtilizationPct: number | null;
+  violations: string[];
+}
+
 export interface TrafficAllocationResult {
   diagnostics: SolverDiagnostics;
   maxUtilizationPct: number | null;
   allocations: Array<{ demandId: string; linkId: string; direction: 'forward' | 'reverse'; flowGbps: number }>;
+  verification: TrafficAllocationVerification | null;
 }
 
 export interface CapacityPlanRequirements {
@@ -160,8 +171,9 @@ function expression(terms: Array<[number, string]>): string {
 
 function activeArcs(project: NetworkProject): Array<{ linkId: string; source: string; target: string; direction: 'forward' | 'reverse' }> {
   const arcs: Array<{ linkId: string; source: string; target: string; direction: 'forward' | 'reverse' }> = [];
+  const availableNodes = new Set(project.nodes.filter((node) => node.available !== false).map((node) => node.id));
   for (const link of project.links) {
-    if (link.available === false) continue;
+    if (link.available === false || !availableNodes.has(link.source) || !availableNodes.has(link.target)) continue;
     arcs.push({ linkId: link.id, source: link.source, target: link.target, direction: 'forward' });
     if (link.bidirectional !== false) arcs.push({ linkId: link.id, source: link.target, target: link.source, direction: 'reverse' });
   }
@@ -201,16 +213,73 @@ export function buildTrafficAllocationLP(project: NetworkProject): { problem: st
   return { problem: lines.join('\n'), variables };
 }
 
+export function verifyTrafficAllocationSolution(
+  project: NetworkProject,
+  allocations: TrafficAllocationResult['allocations'],
+  maxUtilizationPct: number | null,
+  tolerance = 1e-6,
+): TrafficAllocationVerification {
+  const violations: string[] = [];
+  const arcs = activeArcs(project);
+  const arcKey = new Set(arcs.map((arc) => `${arc.linkId}:${arc.direction}:${arc.source}:${arc.target}`));
+  const demandById = new Map(project.demands.map((demand) => [demand.id, demand]));
+  const linkById = new Map(project.links.map((link) => [link.id, link]));
+  const flowByDemandNode = new Map<string, number>();
+  const linkLoads = new Map<string, number>();
+  let nonnegativeFlows = true;
+
+  for (const row of allocations) {
+    if (!Number.isFinite(row.flowGbps) || row.flowGbps < -tolerance) { nonnegativeFlows = false; violations.push(`Non-finite or negative flow for ${row.demandId}/${row.linkId}.`); continue; }
+    const demand = demandById.get(row.demandId);
+    const link = linkById.get(row.linkId);
+    if (!demand || !link) { violations.push(`Allocation references unknown demand/link ${row.demandId}/${row.linkId}.`); continue; }
+    const source = row.direction === 'forward' ? link.source : link.target;
+    const target = row.direction === 'forward' ? link.target : link.source;
+    if (!arcKey.has(`${row.linkId}:${row.direction}:${source}:${target}`)) { violations.push(`Allocation uses unavailable or invalid arc ${row.linkId}/${row.direction}.`); continue; }
+    flowByDemandNode.set(`${row.demandId}:${source}`, (flowByDemandNode.get(`${row.demandId}:${source}`) ?? 0) + row.flowGbps);
+    flowByDemandNode.set(`${row.demandId}:${target}`, (flowByDemandNode.get(`${row.demandId}:${target}`) ?? 0) - row.flowGbps);
+    linkLoads.set(row.linkId, (linkLoads.get(row.linkId) ?? 0) + row.flowGbps);
+  }
+
+  let flowConservation = true;
+  for (const demand of project.demands) {
+    for (const node of project.nodes) {
+      const expected = node.id === demand.source ? demand.bandwidthGbps : node.id === demand.target ? -demand.bandwidthGbps : 0;
+      const actual = flowByDemandNode.get(`${demand.id}:${node.id}`) ?? 0;
+      if (Math.abs(actual - expected) > tolerance) { flowConservation = false; violations.push(`Flow conservation failed for ${demand.id} at ${node.id}: ${actual} vs ${expected}.`); }
+    }
+  }
+
+  let capacityConstraints = true;
+  let computedMaxUtilizationPct = 0;
+  for (const link of project.links) {
+    if (link.available === false) continue;
+    const load = linkLoads.get(link.id) ?? 0;
+    const utilization = (load / link.capacityGbps) * 100;
+    computedMaxUtilizationPct = Math.max(computedMaxUtilizationPct, utilization);
+    if (maxUtilizationPct !== null && load > link.capacityGbps * (maxUtilizationPct / 100) + tolerance) { capacityConstraints = false; violations.push(`Capacity envelope failed for ${link.id}.`); }
+  }
+  const objectiveConsistent = maxUtilizationPct !== null && Math.abs(computedMaxUtilizationPct - maxUtilizationPct) <= Math.max(tolerance, 1e-5);
+  if (!objectiveConsistent) violations.push(`Reported max utilization ${maxUtilizationPct} does not match calculated ${computedMaxUtilizationPct}.`);
+  return { valid: nonnegativeFlows && flowConservation && capacityConstraints && objectiveConsistent && violations.length === 0, nonnegativeFlows, flowConservation, capacityConstraints, objectiveConsistent, computedMaxUtilizationPct: round(computedMaxUtilizationPct), violations };
+}
+
 export async function optimizeRouting(project: NetworkProject, options: SolverRunOptions = {}): Promise<TrafficAllocationResult> {
   const timeLimitMs = Math.max(50, options.timeLimitMs ?? 5_000);
   const { problem, variables } = buildTrafficAllocationLP(project);
   const startedAt = performanceNow();
   const highs = await loadHighs(options);
   const raw = highs.solve(problem, { output_flag: false, time_limit: timeLimitMs / 1000 });
-  const diagnostics = diagnosticsFrom(raw, project, [null], problem, startedAt, timeLimitMs);
+  let diagnostics = diagnosticsFrom(raw, project, [null], problem, startedAt, timeLimitMs);
   const allocations = variables.map((variable) => ({ ...variable, flowGbps: round(numeric(raw.Columns?.[variable.name]?.Primal) ?? 0) })).filter((row) => row.flowGbps > 1e-8);
   const t = numeric(raw.Columns?.t?.Primal);
-  return { diagnostics, maxUtilizationPct: t === null ? null : round(t * 100), allocations };
+  const maxUtilizationPct = t === null ? null : round(t * 100);
+  const hasSolution = diagnostics.proof === 'optimal' || diagnostics.proof === 'feasible-incumbent';
+  const verification = hasSolution ? verifyTrafficAllocationSolution(project, allocations, maxUtilizationPct) : null;
+  if (verification && !verification.valid) {
+    diagnostics = { ...diagnostics, proof: 'unknown', status: `Invalid primal (${diagnostics.status})`, message: `Solver primal failed independent verification: ${verification.violations.join(' ')}` };
+  }
+  return { diagnostics, maxUtilizationPct, allocations, verification };
 }
 
 interface UpgradeVariable { name: string; linkId: string; optionIndex: number; fromCapacityGbps: number; toCapacityGbps: number; deltaCapacityGbps: number; cost: number }
