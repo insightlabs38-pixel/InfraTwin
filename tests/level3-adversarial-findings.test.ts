@@ -38,10 +38,11 @@ function manyPathProject(layers = 7): NetworkProject {
 }
 
 test('adversarial repro: ECMP reports true path count independently of 64-path materialization cap', () => {
-  const route = routeProject(manyPathProject()).routes[0] as typeof routeProject extends (...args: never[]) => infer R ? R extends { routes: Array<infer T> } ? T & Record<string, unknown> : never : never;
+  const route = routeProject(manyPathProject()).routes[0];
   assert.equal(route.reachable, true);
   assert.equal(route.paths.length, 64, 'inspection materialization remains bounded');
-  assert.equal(route.equalCostPathCount, '128');
+  assert.equal(route.equalCostPathCountExact, '128');
+  assert.equal(route.equalCostPathCount, 128);
   assert.equal(route.materializedPathCount, 64);
   assert.equal(route.pathsTruncated, true);
   const sourceFractions = Object.entries(route.linkFractions).filter(([id]) => id === 'E000' || id === 'E001').reduce((sum, [, fraction]) => sum + Number(fraction), 0);

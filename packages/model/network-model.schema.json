@@ -20,11 +20,13 @@
     },
     "id": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "maxLength": 128
     },
     "name": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "maxLength": 512
     },
     "nodes": {
       "type": "array",
@@ -141,6 +143,7 @@
         },
         "upgradeOptions": {
           "type": "array",
+          "maxItems": 64,
           "items": {
             "type": "object",
             "required": [

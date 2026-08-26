@@ -48,7 +48,10 @@ export interface InspectDemandsSummary {
     maxUtilizationPct: number;
     reachable: boolean;
     routeLinkIds: string[];
-    equalCostPathCount: number;
+    equalCostPathCount: number | null;
+    equalCostPathCountExact: string;
+    materializedPathCount: number;
+    pathsTruncated: boolean;
   }>;
 }
 
@@ -155,7 +158,10 @@ export function inspectDemands(project: NetworkProject, patch?: ScenarioPatch | 
         maxUtilizationPct: serviceClass?.maxUtilizationPct ?? 100,
         reachable: route?.reachable ?? false,
         routeLinkIds: route ? Object.keys(route.linkFractions).filter((linkId) => route.linkFractions[linkId] > 0).sort() : [],
-        equalCostPathCount: route?.paths.length ?? 0,
+        equalCostPathCount: route?.equalCostPathCount ?? 0,
+        equalCostPathCountExact: route?.equalCostPathCountExact ?? '0',
+        materializedPathCount: route?.materializedPathCount ?? 0,
+        pathsTruncated: route?.pathsTruncated ?? false,
       };
     }),
   };
