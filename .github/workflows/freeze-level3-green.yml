@@ -1,0 +1,27 @@
+name: Freeze Level 3 green
+
+on:
+  push:
+    branches:
+      - feature/level-3-optimization
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create level-3-green tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin refs/tags/level-3-green >/dev/null 2>&1; then
+            echo 'level-3-green already exists'
+            exit 0
+          fi
+          git fetch --no-tags origin 15e8861457816f2234ebc9750b433ab8e3c6f342
+          git tag level-3-green 15e8861457816f2234ebc9750b433ab8e3c6f342
+          git push origin refs/tags/level-3-green
