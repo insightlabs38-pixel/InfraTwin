@@ -1,0 +1,1 @@
+trigger confirmed adversarial fix application
