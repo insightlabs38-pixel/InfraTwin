@@ -1,0 +1,21 @@
+name: Tag Level 1 green
+
+on:
+  push:
+    branches:
+      - feature/level-1-complete-contender
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag verified main
+        run: |
+          git fetch origin main
+          git tag level-1-green origin/main
+          git push origin refs/tags/level-1-green
