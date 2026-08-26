@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Apply exact reversibility fix
+      - name: Apply exact reversibility and strict-test typing fixes
         shell: bash
         run: |
           set -euo pipefail
@@ -40,7 +40,6 @@ jobs:
           text = text.replace(old_capacity, new_capacity, 1)
 
           start = text.index('export function invertCandidatePlan(')
-          old_inverse = text[start:]
           new_inverse = """export function invertCandidatePlan(project: NetworkProject, candidate: CandidatePlan): CandidatePlan {\n  if (candidate.baseModelHash !== modelHash(project)) throw new Error('Candidate is stale because the project changed after it was proposed.');\n  let current = cloneProject(project);\n  const inverseCommands: ModelCommand[] = [];\n\n  candidate.commands.forEach((command, index) => {\n    let inverse: ModelCommand;\n    if (command.type === 'set_link_capacity') {\n      const linkId = String(command.args.linkId ?? '');\n      const link = current.links.find((item) => item.id === linkId);\n      if (!link) throw new Error(`Unknown link ${linkId}`);\n      inverse = {\n        id: `undo-${index}-${command.id}`,\n        type: 'set_link_capacity',\n        actor: 'human',\n        args: {\n          linkId,\n          capacityGbps: link.capacityGbps,\n          upgradeOptions: link.upgradeOptions ? link.upgradeOptions.map((option) => ({ ...option })) : null,\n        },\n        createdAt: new Date(0).toISOString(),\n      };\n    } else if (command.type === 'set_link_availability') {\n      const linkId = String(command.args.linkId ?? '');\n      const link = current.links.find((item) => item.id === linkId);\n      if (!link) throw new Error(`Unknown link ${linkId}`);\n      inverse = {\n        id: `undo-${index}-${command.id}`,\n        type: 'set_link_availability',\n        actor: 'human',\n        args: { linkId, available: Object.prototype.hasOwnProperty.call(link, 'available') ? link.available : null },\n        createdAt: new Date(0).toISOString(),\n      };\n    } else if (command.type === 'set_demand_bandwidth') {\n      const demandId = String(command.args.demandId ?? '');\n      const demand = current.demands.find((item) => item.id === demandId);\n      if (!demand) throw new Error(`Unknown demand ${demandId}`);\n      inverse = {\n        id: `undo-${index}-${command.id}`,\n        type: 'set_demand_bandwidth',\n        actor: 'human',\n        args: { demandId, bandwidthGbps: demand.bandwidthGbps },\n        createdAt: new Date(0).toISOString(),\n      };\n    } else {\n      throw new Error(`Candidate command ${command.type} is not reversibly supported.`);\n    }\n    inverseCommands.unshift(inverse);\n    current = applyModelCommand(current, command);\n  });\n\n  return {\n    id: `undo:${candidate.id}`,\n    name: `Undo ${candidate.name}`,\n    baseModelHash: modelHash(current),\n    commands: inverseCommands,\n    objective: { name: 'undo', value: 0 },\n    rationaleEvidenceIds: [...candidate.rationaleEvidenceIds],\n  };\n}\n"""
           text = text[:start] + new_inverse
           model_path.write_text(text)
@@ -52,6 +51,13 @@ jobs:
           if marker not in tests:
               raise SystemExit('WebMCP test marker not found')
           tests = tests.replace(marker, extra + marker, 1)
+          old_opt = "assert.equal(optimization?.diagnostics.proof, 'optimal');"
+          new_opt = "assert.equal((optimization as CapacityOptimizationResult | null)?.diagnostics.proof, 'optimal');"
+          old_verify = "assert.equal(verification?.status, 'verified');"
+          new_verify = "assert.equal((verification as CandidateVerification | null)?.status, 'verified');"
+          if old_opt not in tests or old_verify not in tests:
+              raise SystemExit('expected strict-typing assertions not found')
+          tests = tests.replace(old_opt, new_opt, 1).replace(old_verify, new_verify, 1)
           test_path.write_text(tests)
           PY
       - name: Sync npm lockfile
@@ -74,5 +80,5 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add packages/model/src/index.ts tests/level3.test.ts package-lock.json
           git diff --cached --quiet && exit 0
-          git commit -m 'fix(level-3): make candidate undo byte-exact' -m 'Restore pruned upgrade options and optional link availability state, construct inverse commands from immediate pre-command snapshots, and synchronize the HiGHS lockfile after the full Level 3 gate.'
+          git commit -m 'fix(level-3): make candidate undo byte-exact' -m 'Restore pruned upgrade options and optional link availability state, construct inverse commands from immediate pre-command snapshots, make WebMCP eval assertions strict-TypeScript-safe, and synchronize the HiGHS lockfile after the full Level 3 gate.'
           git push origin HEAD:feature/level-3-optimization
