@@ -14,42 +14,157 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Repair and verify Level 3 source archive
+      - name: Recover and apply verified Level 3 source archive
         shell: bash
         run: |
           set -euo pipefail
           cat .github/level3_bundle_v2/part{00..05} \
               .github/level3_bundle/part02 \
               .github/level3_bundle/part03 > /tmp/level3.b64
-          base64 --decode /tmp/level3.b64 > /tmp/level3.tar.gz
 
           python3 - <<'PY'
           from pathlib import Path
-          import struct, zlib, hashlib, base64
-          p = Path('/tmp/level3.tar.gz')
-          data = bytearray(p.read_bytes())
-          print('gzip header', data[:10].hex(), 'flags', data[3])
-          if data[:2] != b'\x1f\x8b' or data[2] != 8 or data[3] != 0:
-              raise SystemExit('unexpected gzip header; refusing trailer repair')
-          raw = bytes(data[10:-8])
-          plain = zlib.decompress(raw, -15)
-          crc = zlib.crc32(plain) & 0xffffffff
-          isize = len(plain) & 0xffffffff
-          old_crc, old_size = struct.unpack('<II', data[-8:])
-          print('old trailer', hex(old_crc), old_size)
-          print('computed trailer', hex(crc), isize)
-          data[-8:] = struct.pack('<II', crc, isize)
-          repaired = bytes(data)
-          Path('/tmp/level3.repaired.tar.gz').write_bytes(repaired)
-          print('repaired gzip sha256', hashlib.sha256(repaired).hexdigest())
-          encoded = base64.b64encode(repaired)
-          print('repaired base64 sha256', hashlib.sha256(encoded).hexdigest(), 'len', len(encoded))
-          if hashlib.sha256(repaired).hexdigest() != '32a34b7dcebf9f5701d4c9e594089b7f34e6253ca144ebe7f6c3115baec6328f':
-              raise SystemExit('repaired gzip does not match expected source archive')
-          if hashlib.sha256(encoded).hexdigest() != '7f66d5b687903a1987b89140a757988f6aedaf8be03bfd6b96006952855df99b':
-              raise SystemExit('repaired base64 does not match expected source bundle')
+          import base64, hashlib, struct, zlib
+
+          alphabet = b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+          expected_b64_sha = '7f66d5b687903a1987b89140a757988f6aedaf8be03bfd6b96006952855df99b'
+          expected_gzip_sha = '32a34b7dcebf9f5701d4c9e594089b7f34e6253ca144ebe7f6c3115baec6328f'
+          b64 = bytearray(Path('/tmp/level3.b64').read_bytes())
+          gzip_data = bytearray(base64.b64decode(b64))
+          if gzip_data[:10] != bytes.fromhex('1f8b0800000000000003'):
+              raise SystemExit('unexpected gzip header')
+          expected_crc, expected_size = struct.unpack('<II', gzip_data[-8:])
+          print('expected trailer crc/size', hex(expected_crc), expected_size)
+          raw = bytearray(gzip_data[10:-8])
+
+          # Build decompressor checkpoints every 128 raw-deflate bytes so each
+          # candidate only replays the suffix after the mutated byte.
+          checkpoints = {}
+          dec = zlib.decompressobj(-15)
+          crc = 0
+          out_len = 0
+          last = 0
+          step = 128
+          checkpoints[0] = (dec.copy(), crc, out_len)
+          for cp in range(step, len(raw) + 1, step):
+              out = dec.decompress(memoryview(raw)[last:cp])
+              crc = zlib.crc32(out, crc)
+              out_len += len(out)
+              checkpoints[cp] = (dec.copy(), crc, out_len)
+              last = cp
+
+          original_gzip = bytes(gzip_data)
+          start_pos = 28000  # first unverified base64 byte
+          found = None
+          attempts = 0
+
+          for pos in range(start_pos, len(b64)):
+              if b64[pos] == ord('='):
+                  continue
+              group_start = (pos // 4) * 4
+              quartet = b64[group_start:group_start + 4]
+              if len(quartet) < 4 or ord('=') in quartet:
+                  continue
+              vals = [alphabet.index(c) for c in quartet]
+              slot = pos % 4
+              current = vals[slot]
+              decoded_start = (group_start // 4) * 3
+              # Only search mutations that affect raw DEFLATE, not the intact trailer.
+              if decoded_start + 2 < 10 or decoded_start >= len(gzip_data) - 8:
+                  continue
+
+              for replacement in range(64):
+                  if replacement == current:
+                      continue
+                  attempts += 1
+                  test_vals = vals.copy()
+                  test_vals[slot] = replacement
+                  n = (test_vals[0] << 18) | (test_vals[1] << 12) | (test_vals[2] << 6) | test_vals[3]
+                  decoded = bytes([(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff])
+
+                  affected = []
+                  for j in range(3):
+                      gp = decoded_start + j
+                      if 10 <= gp < len(gzip_data) - 8:
+                          ri = gp - 10
+                          affected.append((ri, raw[ri]))
+                          raw[ri] = decoded[j]
+                  if not affected:
+                      continue
+
+                  first = min(i for i, _ in affected)
+                  cp = (first // step) * step
+                  state, prefix_crc, prefix_len = checkpoints[cp]
+                  probe = state.copy()
+                  ok = False
+                  try:
+                      out = probe.decompress(memoryview(raw)[cp:]) + probe.flush()
+                      total_len = prefix_len + len(out)
+                      total_crc = zlib.crc32(out, prefix_crc) & 0xffffffff
+                      ok = total_len == expected_size and total_crc == expected_crc
+                  except zlib.error:
+                      pass
+                  finally:
+                      for ri, old in affected:
+                          raw[ri] = old
+
+                  if ok:
+                      repaired_b64 = bytearray(b64)
+                      repaired_b64[pos] = alphabet[replacement]
+                      repaired_gzip = base64.b64decode(repaired_b64)
+                      b64_sha = hashlib.sha256(repaired_b64).hexdigest()
+                      gz_sha = hashlib.sha256(repaired_gzip).hexdigest()
+                      print('candidate repair', pos, chr(b64[pos]), '->', chr(alphabet[replacement]), b64_sha, gz_sha)
+                      if b64_sha == expected_b64_sha and gz_sha == expected_gzip_sha:
+                          found = (pos, alphabet[replacement], repaired_b64, repaired_gzip)
+                          break
+              if found:
+                  break
+              if attempts % 100000 == 0:
+                  print('attempts', attempts, 'position', pos)
+
+          if not found:
+              raise SystemExit(f'no single-character repair found after {attempts} attempts')
+
+          pos, replacement, repaired_b64, repaired_gzip = found
+          print('verified repair at base64 byte', pos, 'replacement', chr(replacement), 'attempts', attempts)
+          Path('/tmp/level3.repaired.b64').write_bytes(repaired_b64)
+          Path('/tmp/level3.repaired.tar.gz').write_bytes(repaired_gzip)
+          plain = zlib.decompress(repaired_gzip, 31)
           Path('/tmp/level3.tar').write_bytes(plain)
           PY
 
+          echo "32a34b7dcebf9f5701d4c9e594089b7f34e6253ca144ebe7f6c3115baec6328f  /tmp/level3.repaired.tar.gz" | sha256sum -c -
+          echo "7f66d5b687903a1987b89140a757988f6aedaf8be03bfd6b96006952855df99b  /tmp/level3.repaired.b64" | sha256sum -c -
           gzip -t /tmp/level3.repaired.tar.gz
-          tar -tf /tmp/level3.tar | sed -n '1,80p'
+          tar -xf /tmp/level3.tar -C .
+
+          for path in \
+            README.md \
+            package.json \
+            tsconfig.json \
+            apps/web/package.json \
+            apps/web/next.config.ts \
+            apps/web/components/workbench.tsx \
+            apps/web/lib/optimizer-client.ts \
+            apps/web/workers/optimizer.worker.ts \
+            scripts/prepare-highs-wasm.mjs \
+            packages/model/src/index.ts \
+            packages/optimizer/package.json \
+            packages/optimizer/src/index.ts \
+            packages/webmcp/package.json \
+            packages/webmcp/src/index.ts \
+            tests/level3.test.ts \
+            benchmarks/level3-optimizer.ts \
+            planning/LEVEL3_IMPLEMENTATION_STATUS.md \
+            planning/LEVEL3_BENCHMARK.md; do
+            test -f "$path"
+          done
+
+          rm -rf .github/level3_bundle .github/level3_bundle_v2
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m 'feat(level-3): add browser-local HiGHS optimization' -m 'Integrate HiGHS WASM in a dedicated browser worker, add traffic-allocation LP and capacity-upgrade MILP workflows, cost/budget/headroom constraints, solver diagnostics and proof semantics, reversible candidates, independent verification, optimizer WebMCP tools, reference tests, and Level 3 benchmarks.'
+          git push origin HEAD:feature/level-3-optimization
