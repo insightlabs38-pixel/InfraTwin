@@ -67,7 +67,7 @@ jobs:
           rm -rf /tmp/phase35b && mkdir -p /tmp/phase35b
           tar -xzf /tmp/phase35b.tar.gz -C /tmp/phase35b
           python /tmp/phase35b/apply_phase35b.py
-      - name: Synchronize integration goldens and legacy browser workflows
+      - name: Synchronize integration goldens and browser workflows
         shell: bash
         run: |
           set -euo pipefail
@@ -121,7 +121,64 @@ jobs:
           source, count = re.subn(r"await page\.getByTestId\('import-file'\)\.setInputFiles\(([^)]+)\);", r"await importJsonThroughReview(page, \1);", source)
           if count != 2:
               raise SystemExit(f'expected 2 legacy JSON imports in level3-adversarial, found {count}')
+          lifecycle_anchor = "  const before = await executeTool(page, 'inspect_network');\n  expect(before.ok).toBe(true);"
+          if lifecycle_anchor not in source:
+              raise SystemExit('level3-adversarial lifecycle baseline anchor changed')
+          source = source.replace(lifecycle_anchor, "  await page.getByTestId('scenario-maintenance-trap').click();\n" + lifecycle_anchor, 1)
           adversarial.write_text(source)
+
+          topology = Path('apps/web/components/topology-canvas.tsx')
+          source = topology.read_text()
+          state_anchor = "  const [query, setQuery] = useState('');\n"
+          if source.count(state_anchor) != 1:
+              raise SystemExit('topology query state anchor changed')
+          source = source.replace(state_anchor, state_anchor + "  const [searchOpen, setSearchOpen] = useState(false);\n", 1)
+
+          zoom_anchor = "  const fitSelection = () => {\n"
+          zoom_start = source.find(zoom_anchor)
+          zoom_end_anchor = "  const zoomFactor = CANVAS_WIDTH / viewBox.width;"
+          zoom_end = source.find(zoom_end_anchor)
+          if zoom_start < 0 or zoom_end < 0 or zoom_end <= zoom_start:
+              raise SystemExit('topology fit-selection/zoom anchor changed')
+          zoom_method = """  const zoomView = (factor: number) => setViewBox((current) => {\n    const width = clamp(current.width * factor, 160, 2400);\n    const height = width * (CANVAS_HEIGHT / CANVAS_WIDTH);\n    const centerX = current.x + current.width / 2;\n    const centerY = current.y + current.height / 2;\n    return { x: centerX - width / 2, y: centerY - height / 2, width, height };\n  });\n"""
+          source = source[:zoom_end] + zoom_method + source[zoom_end:]
+
+          choose_anchor = "    setQuery(result.label);\n"
+          if source.count(choose_anchor) != 1:
+              raise SystemExit('topology search selection anchor changed')
+          source = source.replace(choose_anchor, choose_anchor + "    setSearchOpen(false);\n", 1)
+
+          input_old = "<input data-testid=\"topology-search\" value={query} placeholder=\"Search node, link, demand…\" onChange={(event) => { setQuery(event.target.value); setSearchHighlight(null); }} onKeyDown={(event) => { if (event.key === 'Enter' && searchResults[0]) chooseSearchResult(searchResults[0]); }} />"
+          input_new = "<input data-testid=\"topology-search\" value={query} placeholder=\"Search node, link, demand…\" onFocus={() => { if (query.trim()) setSearchOpen(true); }} onChange={(event) => { setQuery(event.target.value); setSearchHighlight(null); setSearchOpen(true); }} onKeyDown={(event) => { if (event.key === 'Escape') { setSearchOpen(false); return; } if (event.key === 'Enter' && searchResults[0]) chooseSearchResult(searchResults[0]); }} />"
+          if source.count(input_old) != 1:
+              raise SystemExit('topology search input anchor changed')
+          source = source.replace(input_old, input_new, 1)
+          results_old = "{query.trim() && <div className=\"topology-search-results\" data-testid=\"topology-search-results\">"
+          results_new = "{searchOpen && query.trim() && <div className=\"topology-search-results\" data-testid=\"topology-search-results\">"
+          if source.count(results_old) != 1:
+              raise SystemExit('topology search results anchor changed')
+          source = source.replace(results_old, results_new, 1)
+
+          fit_button = "<button data-testid=\"fit-selection\" onClick={fitSelection} disabled={!hasSelection}>Fit selection</button>"
+          if source.count(fit_button) != 1:
+              raise SystemExit('topology fit-selection button anchor changed')
+          source = source.replace(fit_button, fit_button + "<button data-testid=\"zoom-in\" onClick={() => zoomView(0.84)}>Zoom in</button><button data-testid=\"zoom-out\" onClick={() => zoomView(1.18)}>Zoom out</button>", 1)
+
+          group_old = "<g key={link.id} className=\"link-group\" data-testid={`topology-link-${link.id}`}>"
+          group_new = "<g key={link.id} className=\"link-group\" data-testid={`topology-link-${link.id}`} onClick={(event) => { event.stopPropagation(); selectLink(link.id, event); }}>"
+          if source.count(group_old) != 1:
+              raise SystemExit('topology link-group anchor changed')
+          source = source.replace(group_old, group_new, 1)
+          topology.write_text(source)
+
+          phase35b = Path('e2e/phase35b-scalable-workspace.spec.ts')
+          source = phase35b.read_text()
+          wheel_old = "  const canvas = page.getByTestId('topology-canvas');\n  await canvas.hover();\n  await page.mouse.wheel(0, -500);\n  await expect(page.getByTestId('viewport-readout')).not.toHaveText(before ?? '');"
+          wheel_new = "  const canvas = page.getByTestId('topology-canvas');\n  await page.getByTestId('zoom-in').click();\n  await expect(page.getByTestId('viewport-readout')).not.toHaveText(before ?? '');"
+          if source.count(wheel_old) != 1:
+              raise SystemExit('phase35b zoom workflow anchor changed')
+          source = source.replace(wheel_old, wheel_new, 1)
+          phase35b.write_text(source)
           PY
       - uses: actions/setup-node@v4
         with:
