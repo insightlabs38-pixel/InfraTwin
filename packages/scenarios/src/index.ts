@@ -1,5 +1,5 @@
-import type { NetworkProject, ScenarioPatch } from '../../model/src/index.ts';
-import { cloneProject } from '../../model/src/index.ts';
+import type { ChangePlan, NetworkProject, PlanChange, ScenarioPatch } from '../../model/src/index.ts';
+import { addPlanChange, cloneProject, createChangePlan } from '../../model/src/index.ts';
 
 export type BundledScenarioId = 'maintenance-trap' | 'growth-wall' | 'resilience-gap' | 'blank';
 export type ScenarioKind = 'maintenance' | 'growth' | 'resilience' | 'blank';
@@ -14,6 +14,7 @@ export interface ScenarioDefinition {
   recommendedPatch?: ScenarioPatch;
   growthDemandIds?: string[];
   defaultGrowthMultiplier?: number;
+  changePlanTemplate?: ChangePlan;
 }
 
 const serviceClasses = [
@@ -138,6 +139,28 @@ const blank: NetworkProject = {
   metadata: { description: 'A valid empty project for manual import or construction.', suggestedPrompt: 'Import a project JSON file to begin.' },
 };
 
+const TEMPLATE_TIME = '2026-01-01T00:00:00.000Z';
+
+function buildPlanTemplate(project: NetworkProject, id: string, name: string, changes: PlanChange[]): ChangePlan {
+  let plan = createChangePlan(project, name, { id, now: TEMPLATE_TIME });
+  for (const change of changes) plan = addPlanChange(plan, change, TEMPLATE_TIME);
+  // A saved template opens as a draft artifact; history records the semantic template changes.
+  plan.status = 'draft';
+  return plan;
+}
+
+const maintenancePlanTemplate = buildPlanTemplate(maintenanceTrap, 'template-maintenance-chi-dal', 'CHI–DAL maintenance', [
+  { id: 'template-change-maintenance-l1', actor: 'human', type: 'disable_link', target: { kind: 'link', id: 'L1' }, payload: {}, createdAt: TEMPLATE_TIME },
+]);
+
+const growthPlanTemplate = buildPlanTemplate(growthWall, 'template-growth-40', 'East–west +40% growth', [
+  { id: 'template-change-growth-40', actor: 'human', type: 'demand_growth', target: { kind: 'demands', ids: ['GD1', 'GD2'] }, payload: { multiplier: 1.4 }, createdAt: TEMPLATE_TIME },
+]);
+
+const resiliencePlanTemplate = buildPlanTemplate(resilienceGap, 'template-resilience-r2', 'CHI–SEA failure replay', [
+  { id: 'template-change-resilience-r2', actor: 'human', type: 'disable_link', target: { kind: 'link', id: 'R2' }, payload: {}, createdAt: TEMPLATE_TIME },
+]);
+
 const definitions: Record<BundledScenarioId, ScenarioDefinition> = {
   'maintenance-trap': {
     id: 'maintenance-trap', title: 'Maintenance Trap', kind: 'maintenance',
@@ -145,6 +168,7 @@ const definitions: Record<BundledScenarioId, ScenarioDefinition> = {
     suggestedPrompt: String(maintenanceTrap.metadata?.suggestedPrompt ?? ''),
     project: maintenanceTrap,
     recommendedPatch: maintenancePatch,
+    changePlanTemplate: maintenancePlanTemplate,
   },
   'growth-wall': {
     id: 'growth-wall', title: 'Growth Wall', kind: 'growth',
@@ -153,12 +177,14 @@ const definitions: Record<BundledScenarioId, ScenarioDefinition> = {
     project: growthWall,
     growthDemandIds: ['GD1', 'GD2'],
     defaultGrowthMultiplier: 1.4,
+    changePlanTemplate: growthPlanTemplate,
   },
   'resilience-gap': {
     id: 'resilience-gap', title: 'Resilience Gap', kind: 'resilience',
     description: String(resilienceGap.metadata?.description ?? ''),
     suggestedPrompt: String(resilienceGap.metadata?.suggestedPrompt ?? ''),
     project: resilienceGap,
+    changePlanTemplate: resiliencePlanTemplate,
   },
   blank: {
     id: 'blank', title: 'Start Blank', kind: 'blank',
@@ -169,12 +195,12 @@ const definitions: Record<BundledScenarioId, ScenarioDefinition> = {
 };
 
 export function listBundledScenarios(): ScenarioDefinition[] {
-  return (['maintenance-trap', 'growth-wall', 'resilience-gap', 'blank'] as BundledScenarioId[]).map((id) => ({ ...definitions[id], project: cloneProject(definitions[id].project) }));
+  return (['maintenance-trap', 'growth-wall', 'resilience-gap', 'blank'] as BundledScenarioId[]).map((id) => ({ ...definitions[id], project: cloneProject(definitions[id].project), changePlanTemplate: definitions[id].changePlanTemplate ? JSON.parse(JSON.stringify(definitions[id].changePlanTemplate)) as ChangePlan : undefined }));
 }
 
 export function getScenarioDefinition(id: BundledScenarioId): ScenarioDefinition {
   const definition = definitions[id];
-  return { ...definition, project: cloneProject(definition.project), recommendedPatch: definition.recommendedPatch ? JSON.parse(JSON.stringify(definition.recommendedPatch)) as ScenarioPatch : undefined };
+  return { ...definition, project: cloneProject(definition.project), recommendedPatch: definition.recommendedPatch ? JSON.parse(JSON.stringify(definition.recommendedPatch)) as ScenarioPatch : undefined, changePlanTemplate: definition.changePlanTemplate ? JSON.parse(JSON.stringify(definition.changePlanTemplate)) as ChangePlan : undefined };
 }
 
 export function loadScenario(id: BundledScenarioId): NetworkProject {

@@ -45,13 +45,15 @@ export interface CapacityPlanRequirements {
   budgetCostUnits?: number;
   scenarioPatches?: ScenarioPatch[];
   includeBaseline?: boolean;
+  /** Human collaboration restriction: these links must never receive upgrade variables. */
+  lockedLinkIds?: string[];
 }
 
 export interface CapacityOptimizationResult {
   diagnostics: SolverDiagnostics;
   candidate: CandidatePlan | null;
   selectedUpgrades: Array<{ linkId: string; fromCapacityGbps: number; toCapacityGbps: number; cost: number }>;
-  requirements: Required<Pick<CapacityPlanRequirements, 'targetUtilizationPct' | 'includeBaseline'>> & { budgetCostUnits: number | null };
+  requirements: Required<Pick<CapacityPlanRequirements, 'targetUtilizationPct' | 'includeBaseline'>> & { budgetCostUnits: number | null; lockedLinkIds: string[] };
   scenarioHashes: string[];
 }
 
@@ -289,7 +291,8 @@ function normalizedRequirements(requirements: CapacityPlanRequirements): Capacit
   if (!Number.isFinite(targetUtilizationPct) || targetUtilizationPct <= 0 || targetUtilizationPct > 100) throw new Error('targetUtilizationPct must be in (0,100].');
   const budget = requirements.budgetCostUnits;
   if (budget !== undefined && (!Number.isFinite(budget) || budget < 0)) throw new Error('budgetCostUnits must be >= 0.');
-  return { targetUtilizationPct, includeBaseline: requirements.includeBaseline ?? true, budgetCostUnits: budget ?? null };
+  const lockedLinkIds = [...new Set((requirements.lockedLinkIds ?? []).map(String).filter(Boolean))].sort();
+  return { targetUtilizationPct, includeBaseline: requirements.includeBaseline ?? true, budgetCostUnits: budget ?? null, lockedLinkIds };
 }
 
 function selectedPatches(requirements: CapacityPlanRequirements): Array<ScenarioPatch | null> {
@@ -310,7 +313,10 @@ export function buildCapacityUpgradeMILP(project: NetworkProject, requirementsIn
   const patches = selectedPatches(requirementsInput);
   const ratio = requirements.targetUtilizationPct / 100;
   const variables: UpgradeVariable[] = [];
+  const lockedLinkIds = new Set(requirements.lockedLinkIds);
+  for (const linkId of lockedLinkIds) if (!project.links.some((link) => link.id === linkId)) throw new Error(`lockedLinkIds contains unknown link ${linkId}.`);
   project.links.forEach((link, linkIndex) => {
+    if (lockedLinkIds.has(link.id)) return;
     (link.upgradeOptions ?? []).forEach((option, optionIndex) => {
       if (option.capacityGbps <= link.capacityGbps + 1e-9) return;
       variables.push({ name: `u_${linkIndex}_${optionIndex}`, linkId: link.id, optionIndex, fromCapacityGbps: link.capacityGbps, toCapacityGbps: option.capacityGbps, deltaCapacityGbps: option.capacityGbps - link.capacityGbps, cost: option.cost });
@@ -339,7 +345,8 @@ export function buildCapacityUpgradeMILP(project: NetworkProject, requirementsIn
       if (rhs <= 1e-9) return;
       const choices = variables.filter((variable) => variable.linkId === snapshotLink.id);
       const maxImprovement = choices.reduce((best, variable) => Math.max(best, ratio * variable.deltaCapacityGbps), 0);
-      if (maxImprovement + 1e-9 < rhs && !preflightError) preflightError = `No discrete upgrade option on ${snapshotLink.id} can satisfy ${requirements.targetUtilizationPct}% utilization in scenario ${patch?.name ?? 'Baseline'}.`;
+      if (lockedLinkIds.has(snapshotLink.id) && !preflightError) preflightError = `Link ${snapshotLink.id} is locked by the Change Plan and cannot be upgraded to satisfy ${requirements.targetUtilizationPct}% utilization in scenario ${patch?.name ?? 'Baseline'}.`;
+      else if (maxImprovement + 1e-9 < rhs && !preflightError) preflightError = `No discrete upgrade option on ${snapshotLink.id} can satisfy ${requirements.targetUtilizationPct}% utilization in scenario ${patch?.name ?? 'Baseline'}.`;
       lines.push(` cap_${scenarioIndex}_${linkIndex}: ${expression(choices.map((variable) => [ratio * variable.deltaCapacityGbps, variable.name]))} >= ${round(rhs)}`);
     });
   });
@@ -383,6 +390,7 @@ export function verifyCapacityCandidate(project: NetworkProject, candidate: Cand
   const requirements = normalizedRequirements(requirementsInput);
   const patches = selectedPatches(requirementsInput);
   const violations: string[] = [];
+  const lockedLinkIds = new Set(requirements.lockedLinkIds);
   if (candidate.baseModelHash !== modelHash(project)) violations.push('Candidate baseModelHash does not match the project snapshot.');
   let candidateProject: NetworkProject | null = null;
   try { candidateProject = applyCandidatePlan(project, candidate); } catch (error) { violations.push(error instanceof Error ? error.message : 'Candidate application failed.'); }
@@ -392,6 +400,7 @@ export function verifyCapacityCandidate(project: NetworkProject, candidate: Cand
     const linkId = String(command.args.linkId ?? '');
     const capacityGbps = Number(command.args.capacityGbps);
     const link = project.links.find((item) => item.id === linkId);
+    if (lockedLinkIds.has(linkId)) violations.push(`Candidate modifies locked link ${linkId}.`);
     const option = link?.upgradeOptions?.find((item) => Math.abs(item.capacityGbps - capacityGbps) < 1e-9);
     if (!link || !option) { violations.push(`${linkId || 'unknown link'} capacity ${capacityGbps} is not a declared discrete upgrade option.`); continue; }
     calculatedCost += option.cost;

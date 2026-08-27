@@ -266,3 +266,89 @@ button.danger:hover { background: #452026; }
   .journey-step small { display:none; }
   .panel { padding:13px; }
 }
+
+/* Phase 3.5A — collaborative Change Plan workspace */
+.status-chip.draft { background:#1b2431; color:#b7c5d7; border:1px solid #3b4a60; }
+.template-strip { display:flex; align-items:flex-start; gap:16px; margin-bottom:12px; padding:12px 14px; }
+.template-strip > div:first-child { min-width:220px; }
+.template-strip .scenario-list { flex:1; grid-template-columns:repeat(4,minmax(0,1fr)); }
+.template-strip .scenario-card small { display:none; }
+.plan-centric-grid { grid-template-columns:minmax(330px,.95fr) minmax(560px,1.75fr) minmax(330px,.95fr); }
+.plan-panel { display:flex; flex-direction:column; gap:10px; max-height:calc(100vh - 24px); overflow:auto; }
+.plan-status { padding:4px 8px; border:1px solid #33445b; border-radius:999px; color:#9fb0c5; font-size:9px; font-weight:850; text-transform:uppercase; letter-spacing:.08em; }
+.plan-status.verified { border-color:#2e674b; color:#8bdcaf; background:#102219; }
+.plan-status.failing { border-color:#6c343c; color:#f19aa3; background:#281319; }
+.plan-status.candidate { border-color:#5a4e77; color:#c3b3ea; background:#1b1728; }
+.plan-name-row,.new-plan-row { display:flex; gap:6px; }
+.plan-name-row input,.new-plan-row input,.compact-form input,.compact-form select,.capacity-plan-row input { min-width:0; width:100%; border:1px solid #344359; border-radius:8px; background:#111a26; color:#f5f7fb; padding:8px; }
+.plan-name-row input { font-weight:800; }
+.new-plan-row { flex-wrap:wrap; }
+.new-plan-row input { flex:1 1 120px; }
+.plan-subsection { border:1px solid #273549; border-radius:11px; background:#0a111a; padding:10px; }
+.subsection-title { display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:8px; }
+.subsection-title span,.mini-label { color:#7388a5; font-size:9px; font-weight:850; letter-spacing:.09em; text-transform:uppercase; }
+.subsection-title strong { color:#aebed1; font-size:10px; }
+.object-context > small { display:block; color:#8194ac; margin-bottom:8px; }
+.context-actions,.proposal-toolbar,.proposal-actions,.optimizer-actions { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.capacity-plan-row { display:grid; grid-template-columns:1fr auto; gap:6px; margin-top:8px; align-items:end; }
+.capacity-plan-row label,.compact-form label { display:grid; gap:4px; color:#8294aa; font-size:10px; }
+.compact-form { display:grid; gap:7px; }
+.compact-form.two-col { grid-template-columns:1fr 1fr; }
+.inline-details { margin-top:8px; border-top:1px solid #202c3d; padding-top:7px; }
+.inline-details summary { cursor:pointer; color:#9aacc1; font-size:10px; font-weight:750; }
+.inline-details .compact-form { margin-top:8px; }
+.check-row { display:flex !important; grid-template-columns:none !important; align-items:center; gap:6px !important; color:#9aacc1 !important; font-size:10px !important; }
+.check-row input { width:auto !important; }
+.checkbox-grid { display:flex; flex-wrap:wrap; gap:8px; margin:6px 0; }
+.plan-change-row,.proposal-row { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; border-top:1px solid #202b3a; padding:8px 0; }
+.plan-change-row:first-of-type,.proposal-row:first-of-type { border-top:0; }
+.plan-change-row strong,.proposal-row strong { display:block; font-size:11px; line-height:1.35; }
+.plan-change-row small,.proposal-row small { display:block; margin-top:3px; color:#72859d; font-size:9px; }
+.plan-change-row.actor-human { border-left:3px solid #5e8fc5; padding-left:7px; }
+.plan-change-row.actor-agent { border-left:3px solid #9a75d0; padding-left:7px; }
+.plan-change-row > button { padding:3px 7px; }
+.proposal-row.pending { border-left:3px solid #9a75d0; padding-left:7px; }
+.proposal-row.accepted { opacity:.72; border-left:3px solid #4f9a70; padding-left:7px; }
+.proposal-row.rejected { opacity:.58; border-left:3px solid #83525a; padding-left:7px; }
+.proposal-row.stale { background:#241d10; }
+.proposal-actions button { padding:5px 8px; font-size:10px; }
+.restrictions-summary p { margin:4px 0; color:#91a2b6; font-size:10px; }
+.plan-history { display:grid; gap:6px; }
+.plan-history-row { display:grid; grid-template-columns:38px 58px 1fr; gap:6px; align-items:start; border-top:1px solid #1e2938; padding-top:6px; font-size:9px; }
+.plan-history-row time { color:#657990; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+.plan-history-row strong { color:#9bacc0; }
+.plan-history-row span { color:#7e90a7; line-height:1.35; }
+.node-group { cursor:pointer; outline:none; }
+.node-circle.selected-node { stroke:#d9ebff; stroke-width:4; filter:drop-shadow(0 0 7px #c9e3ff); }
+.node-circle.planned-outage-node { stroke:#d6a55c; stroke-dasharray:7 5; }
+.node-circle.planned-change-node { stroke:#65a3df; }
+.node-circle.proposal-node { stroke:#ae7de2; stroke-dasharray:4 4; }
+.node-circle.locked-node { stroke-width:4; }
+.link-line.planned-outage { stroke:#d6a55c; stroke-dasharray:11 7; opacity:.8; }
+.link-line.planned-change { stroke:#5f9ed9; }
+.link-line.proposal-link { stroke:#a777db; stroke-dasharray:5 6; }
+.link-line.locked-link { filter:drop-shadow(0 0 3px #f0d692); }
+.link-line.violation-link { stroke:#e16f79; }
+.legend-line.planned { border-top-color:#5f9ed9; }
+.legend-line.proposal { border-top-color:#a777db; border-top-style:dashed; }
+.legend-line.locked { border-top-color:#f0d692; box-shadow:0 0 4px #f0d692; }
+.legend-line.violation { border-top-color:#e16f79; }
+.selection-note { display:flex; justify-content:space-between; gap:10px; margin-top:10px; border:1px solid #2d4665; border-radius:9px; padding:9px 10px; background:#0c1724; }
+.selection-note strong { font-size:11px; }
+.selection-note span { color:#8598ae; font-size:10px; text-align:right; }
+.stale-evidence { border-color:#6c5730; background:#221b0e; }
+.optimizer-actions { margin:10px 0; }
+.demand-route.standalone { width:100%; border:1px solid #243247; background:#0a111a; padding:9px; border-radius:9px; }
+.phase35-lower { grid-template-columns:minmax(360px,1fr) minmax(300px,.85fr) minmax(420px,1.2fr); }
+@media (max-width:1180px) {
+  .template-strip { flex-direction:column; }
+  .template-strip .scenario-list { width:100%; grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .plan-centric-grid { grid-template-columns:minmax(320px,.8fr) minmax(0,1.6fr); }
+  .plan-centric-grid .evidence-panel { grid-column:1/-1; }
+  .plan-panel { max-height:none; }
+  .phase35-lower { grid-template-columns:1fr 1fr; }
+}
+@media (max-width:800px) {
+  .template-strip .scenario-list,.plan-centric-grid,.phase35-lower { grid-template-columns:1fr; }
+  .compact-form.two-col { grid-template-columns:1fr; }
+}

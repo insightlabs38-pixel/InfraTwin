@@ -93,6 +93,7 @@ export interface InfraTwinToolServices {
   publishBottleneckAnalysis?(analysis: BottleneckAnalysis | null): void;
   selectEvidence?(evidence: EvidenceRef | null): void;
   getCandidate(): CandidatePlan | null;
+  getLockedLinkIds?(): string[];
   setCandidate(candidate: CandidatePlan | null): void;
   publishCandidateComparison(comparison: CandidateComparison | null): void;
   optimizeCapacity?(requirements: CapacityPlanRequirements, options?: ToolExecuteOptions): Promise<CapacityOptimizationResult>;
@@ -320,9 +321,12 @@ export async function registerCoreTools(context: ModelContextLike, services: Inf
         const candidate = result as CandidatePlan; return `${candidate.commands.length} candidate change(s) · ${candidate.objective.value} ${candidate.objective.unit ?? ''}`.trim();
       }, async (input) => {
         const project = services.getProject();
+        const lockedLinkIds = services.getLockedLinkIds?.() ?? [];
+        const requestedLinkId = String(input.linkId ?? '');
+        if (String(input.strategy ?? '') === 'set_link_capacity' && lockedLinkIds.includes(requestedLinkId)) throw new Error(`Link ${requestedLinkId} is locked by the current Change Plan.`);
         const candidate = String(input.strategy ?? '') === 'set_link_capacity'
-          ? createExplicitCapacityCandidate(project, String(input.linkId ?? ''), Number(input.capacityGbps))
-          : proposeCapacityMitigation(project, services.getActiveScenario(), Number(input.targetHeadroomPct ?? 20));
+          ? createExplicitCapacityCandidate(project, requestedLinkId, Number(input.capacityGbps))
+          : proposeCapacityMitigation(project, services.getActiveScenario(), Number(input.targetHeadroomPct ?? 20), lockedLinkIds);
         if (!candidate) throw new Error('No capacity mitigation candidate is needed or available for the current evidence.');
         services.setCandidate(candidate); services.publishCandidateComparison(null); return candidate;
       }),
