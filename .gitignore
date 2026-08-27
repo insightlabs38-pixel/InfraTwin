@@ -8,3 +8,5 @@ coverage/
 .DS_Store
 playwright-report/
 test-results/
+*.tsbuildinfo
+apps/web/public/solver-assets/
