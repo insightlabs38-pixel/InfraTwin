@@ -140,16 +140,17 @@ export interface ContingencyWorkerLike {
   terminate(): void;
 }
 
-export interface ContingencyWorkerRequest {
-  taskId: string;
-  project: NetworkProject;
-  basePatch: ScenarioPatch | null;
-  linkId: string;
-}
+export type ContingencyWorkerRequest =
+  | { type: 'init'; project: NetworkProject; basePatch: ScenarioPatch | null; baseModelHash: string }
+  | { type: 'run'; taskId: string; linkId: string };
 
 export type ContingencyWorkerResponse =
   | { taskId: string; ok: true; contingency: ContingencyCase }
   | { taskId: string; ok: false; error: string };
+
+export interface AnalysisRunContext {
+  baseModelHash?: string;
+}
 
 export interface ContingencyRunOptions {
   signal?: AbortSignal;
@@ -186,7 +187,7 @@ export function detectComputeCapabilities(env: { Worker?: unknown; navigator?: {
   };
 }
 
-function analyzeSnapshot(baseProject: NetworkProject, snapshot: NetworkProject, patchHash: string): CapacityAnalysis {
+function analyzeSnapshot(baseProject: NetworkProject, snapshot: NetworkProject, patchHash: string, context: AnalysisRunContext = {}): CapacityAnalysis {
   const start = now();
   const routing = routeProject(snapshot);
   const violations: Violation[] = [];
@@ -229,7 +230,7 @@ function analyzeSnapshot(baseProject: NetworkProject, snapshot: NetworkProject, 
     }
   }
 
-  const baseHash = modelHash(baseProject);
+  const baseHash = context.baseModelHash ?? modelHash(baseProject);
   const end = now();
   const ecmp = routing.mode === 'ecmp';
   return {
@@ -263,9 +264,9 @@ function analyzeSnapshot(baseProject: NetworkProject, snapshot: NetworkProject, 
   };
 }
 
-export function runCapacityAnalysis(project: NetworkProject): CapacityAnalysis { return analyzeSnapshot(project, project, 'baseline'); }
-export function runScenarioCapacityAnalysis(project: NetworkProject, patch?: ScenarioPatch | null): CapacityAnalysis {
-  return patch ? analyzeSnapshot(project, applyScenario(project, patch), scenarioHash(patch)) : runCapacityAnalysis(project);
+export function runCapacityAnalysis(project: NetworkProject, context: AnalysisRunContext = {}): CapacityAnalysis { return analyzeSnapshot(project, project, 'baseline', context); }
+export function runScenarioCapacityAnalysis(project: NetworkProject, patch?: ScenarioPatch | null, context: AnalysisRunContext = {}): CapacityAnalysis {
+  return patch ? analyzeSnapshot(project, applyScenario(project, patch), scenarioHash(patch), context) : runCapacityAnalysis(project, context);
 }
 
 export function analyzeChangePlan(project: NetworkProject, plan: ChangePlan): ChangePlanAnalysis {
@@ -391,11 +392,11 @@ function contingencyScore(analysis: CapacityAnalysis): { score: number; critical
   };
 }
 
-export function runSingleLinkContingency(project: NetworkProject, linkId: string, basePatch?: ScenarioPatch | null): ContingencyCase {
+export function runSingleLinkContingency(project: NetworkProject, linkId: string, basePatch?: ScenarioPatch | null, context: AnalysisRunContext = {}): ContingencyCase {
   const link = project.links.find((item) => item.id === linkId);
   if (!link || link.available === false) throw new Error(`Link ${linkId} is not eligible for N-1 analysis.`);
   const patch = mergeFailurePatch(basePatch, linkId);
-  const analysis = runScenarioCapacityAnalysis(project, patch);
+  const analysis = runScenarioCapacityAnalysis(project, patch, context);
   const scoring = contingencyScore(analysis);
   return {
     linkId, score: scoring.score, criticalUnsatisfiedGbps: scoring.criticalUnsatisfiedGbps, verdict: analysis.result.verdict,
@@ -451,7 +452,8 @@ function eligibleLinkIds(project: NetworkProject, maxScenarios = MAX_N1_SCENARIO
 export function runLinkContingencies(project: NetworkProject, basePatch?: ScenarioPatch | null, maxScenarios = MAX_N1_SCENARIOS): ContingencyAnalysis {
   const start = now();
   const { ids, totalEligible } = eligibleLinkIds(project, maxScenarios);
-  const cases = ids.map((linkId) => runSingleLinkContingency(project, linkId, basePatch));
+  const context: AnalysisRunContext = { baseModelHash: modelHash(project) };
+  const cases = ids.map((linkId) => runSingleLinkContingency(project, linkId, basePatch, context));
   return finalizeContingencies(project, basePatch, cases, start, totalEligible, ids.length < totalEligible ? 'partial' : 'complete', 1, 'sequential');
 }
 
@@ -460,7 +462,7 @@ function boundedWorkerCount(value: number | undefined): number {
   return Math.max(1, Math.min(MAX_WORKERS, Math.floor(value ?? fallback)));
 }
 
-function workerTask(worker: ContingencyWorkerLike, request: ContingencyWorkerRequest, signal: AbortSignal | undefined, timeoutMs: number): Promise<ContingencyCase> {
+function workerTask(worker: ContingencyWorkerLike, request: Extract<ContingencyWorkerRequest, { type: 'run' }>, signal: AbortSignal | undefined, timeoutMs: number): Promise<ContingencyCase> {
   return new Promise((resolve, reject) => {
     let settled = false;
     const cleanup = () => {
@@ -495,6 +497,7 @@ export async function runLinkContingenciesAsync(project: NetworkProject, basePat
   let cursor = 0;
   let running = 0;
   const workers: ContingencyWorkerLike[] = [];
+  const context: AnalysisRunContext = { baseModelHash: modelHash(project) };
 
   const progress = () => options.onProgress?.({
     total: ids.length,
@@ -517,7 +520,11 @@ export async function runLinkContingenciesAsync(project: NetworkProject, basePat
 
   try {
     if (options.workerFactory) {
-      for (let i = 0; i < workerCount; i += 1) workers.push(options.workerFactory());
+      for (let i = 0; i < workerCount; i += 1) {
+        const worker = options.workerFactory();
+        worker.postMessage({ type: 'init', project, basePatch: basePatch ?? null, baseModelHash: context.baseModelHash! });
+        workers.push(worker);
+      }
       await Promise.all(workers.map(async (worker, workerIndex) => {
         while (true) {
           checkBudget();
@@ -526,7 +533,7 @@ export async function runLinkContingenciesAsync(project: NetworkProject, basePat
           running += 1; progress();
           try {
             const remaining = Math.max(1, timeLimitMs - (now() - start));
-            const contingency = await workerTask(worker, { taskId: `${workerIndex}:${linkId}`, project, basePatch: basePatch ?? null, linkId }, options.signal, remaining);
+            const contingency = await workerTask(worker, { type: 'run', taskId: `${workerIndex}:${linkId}`, linkId }, options.signal, remaining);
             cases.push(contingency);
           } finally {
             running -= 1; progress();
@@ -543,7 +550,7 @@ export async function runLinkContingenciesAsync(project: NetworkProject, basePat
           try {
             await new Promise<void>((resolve) => setTimeout(resolve, 0));
             checkBudget();
-            cases.push(runSingleLinkContingency(project, linkId, basePatch));
+            cases.push(runSingleLinkContingency(project, linkId, basePatch, context));
           } finally {
             running -= 1; progress();
           }

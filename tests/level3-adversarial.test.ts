@@ -195,10 +195,15 @@ class InlineWorker implements ContingencyWorkerLike {
   onmessage: ((event: MessageEvent<ContingencyWorkerResponse>) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
   terminated = false;
+  private project: NetworkProject | null = null;
+  private basePatch: ScenarioPatch | null = null;
+  private baseModelHash = '';
   postMessage(message: ContingencyWorkerRequest): void {
+    if (message.type === 'init') { this.project = message.project; this.basePatch = message.basePatch; this.baseModelHash = message.baseModelHash; return; }
     queueMicrotask(() => {
       try {
-        const contingency = runSingleLinkContingency(message.project, message.linkId, message.basePatch);
+        if (!this.project) throw new Error('not initialized');
+        const contingency = runSingleLinkContingency(this.project, message.linkId, this.basePatch, { baseModelHash: this.baseModelHash });
         this.onmessage?.({ data: { taskId: message.taskId, ok: true, contingency } } as MessageEvent<ContingencyWorkerResponse>);
       } catch (error) {
         this.onmessage?.({ data: { taskId: message.taskId, ok: false, error: error instanceof Error ? error.message : String(error) } } as MessageEvent<ContingencyWorkerResponse>);

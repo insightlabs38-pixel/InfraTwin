@@ -70,7 +70,8 @@ function round(value: number): number { return Math.round(value * 1_000_000) / 1
 
 class BinaryMinHeap {
   private values: HeapEntry[] = [];
-  constructor(private readonly compare: (left: HeapEntry, right: HeapEntry) => number) {}
+  private readonly compare: (left: HeapEntry, right: HeapEntry) => number;
+  constructor(compare: (left: HeapEntry, right: HeapEntry) => number) { this.compare = compare; }
   get size(): number { return this.values.length; }
   push(value: HeapEntry): void {
     this.values.push(value);
@@ -688,4 +689,40 @@ export function minCut(project: NetworkProject, sourceId: string, targetId: stri
   const cutLinkSet = new Set(cutLinkIds);
   const cutCapacityGbps = project.links.filter((link) => cutLinkSet.has(link.id)).reduce((sum, link) => sum + link.capacityGbps, 0);
   return { sourceId, targetId, maxFlowGbps: round(maxFlow), cutCapacityGbps: round(cutCapacityGbps), cutLinkIds, reachableNodeIds: [...reachable].sort() };
+}
+
+export interface RoutingWorkloadEstimate {
+  nodes: number;
+  links: number;
+  directedArcs: number;
+  demands: number;
+  uniqueSources: number;
+  uniqueTargets: number;
+  shortestPathRuns: number;
+  estimatedWorkUnits: number;
+}
+
+/** Deterministic complexity estimate used only for execution-mode selection; it is not a runtime prediction. */
+export function estimateRoutingWorkload(project: NetworkProject): RoutingWorkloadEstimate {
+  const availableNodes = new Set(project.nodes.filter((node) => node.available !== false).map((node) => node.id));
+  let directedArcs = 0;
+  for (const link of project.links) {
+    if (link.available === false || !availableNodes.has(link.source) || !availableNodes.has(link.target)) continue;
+    directedArcs += link.bidirectional === false ? 1 : 2;
+  }
+  const routableDemands = project.demands.filter((demand) => availableNodes.has(demand.source) && availableNodes.has(demand.target));
+  const uniqueSources = new Set(routableDemands.map((demand) => demand.source)).size;
+  const uniqueTargets = new Set(routableDemands.map((demand) => demand.target)).size;
+  const shortestPathRuns = uniqueSources + (project.routingProfile.mode === 'ecmp' ? uniqueTargets : 0);
+  const graphComplexity = (availableNodes.size + directedArcs) * Math.max(1, Math.log2(Math.max(2, availableNodes.size)));
+  return {
+    nodes: project.nodes.length,
+    links: project.links.length,
+    directedArcs,
+    demands: project.demands.length,
+    uniqueSources,
+    uniqueTargets,
+    shortestPathRuns,
+    estimatedWorkUnits: Math.round(shortestPathRuns * graphComplexity),
+  };
 }

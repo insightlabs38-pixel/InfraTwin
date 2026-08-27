@@ -74,6 +74,8 @@ export interface CandidateVerification {
 export interface SolverRunOptions {
   timeLimitMs?: number;
   locateFile?: (file: string) => string;
+  /** Explicit expert override for measured scale guardrails. Normal UI paths leave this false. */
+  allowLargeModel?: boolean;
 }
 
 type HighsOneShotResult = {
@@ -182,9 +184,52 @@ function activeArcs(project: NetworkProject): Array<{ linkId: string; source: st
   return arcs;
 }
 
+export const ROUTING_LP_RECOMMENDED_MAX_FLOW_VARIABLES = 100_000;
+export const CAPACITY_MILP_RECOMMENDED_MAX_DECISION_SCENARIO_PRODUCT = 100_000;
+
+export interface TrafficAllocationLPEstimate {
+  directedArcs: number;
+  demands: number;
+  flowVariables: number;
+  totalVariables: number;
+  constraints: number;
+  recommended: boolean;
+  reason: string;
+}
+
+export function estimateTrafficAllocationLP(project: NetworkProject): TrafficAllocationLPEstimate {
+  const arcs = activeArcs(project).length;
+  const flowVariables = project.demands.length * arcs;
+  const constraints = project.demands.length * project.nodes.length + project.links.filter((link) => link.available !== false).length;
+  const recommended = flowVariables <= ROUTING_LP_RECOMMENDED_MAX_FLOW_VARIABLES;
+  return {
+    directedArcs: arcs,
+    demands: project.demands.length,
+    flowVariables,
+    totalVariables: flowVariables + 1,
+    constraints,
+    recommended,
+    reason: recommended
+      ? `Estimated ${flowVariables.toLocaleString()} flow variables are within the measured Phase 3.5C routing-LP envelope.`
+      : `Estimated ${flowVariables.toLocaleString()} flow variables exceed the measured Phase 3.5C routing-LP envelope of ${ROUTING_LP_RECOMMENDED_MAX_FLOW_VARIABLES.toLocaleString()}; deterministic routing and Change Plan analysis remain available.`,
+  };
+}
+
 export function buildTrafficAllocationLP(project: NetworkProject): { problem: string; variables: Array<{ name: string; demandId: string; linkId: string; direction: 'forward' | 'reverse' }> } {
   const arcs = activeArcs(project);
   const variables: Array<{ name: string; demandId: string; linkId: string; direction: 'forward' | 'reverse' }> = [];
+  const outgoingArcIndexes = new Map<string, number[]>();
+  const incomingArcIndexes = new Map<string, number[]>();
+  const arcIndexesByLink = new Map<string, number[]>();
+  arcs.forEach((arc, arcIndex) => {
+    const outgoing = outgoingArcIndexes.get(arc.source) ?? [];
+    outgoing.push(arcIndex); outgoingArcIndexes.set(arc.source, outgoing);
+    const incoming = incomingArcIndexes.get(arc.target) ?? [];
+    incoming.push(arcIndex); incomingArcIndexes.set(arc.target, incoming);
+    const linkIndexes = arcIndexesByLink.get(arc.linkId) ?? [];
+    linkIndexes.push(arcIndex); arcIndexesByLink.set(arc.linkId, linkIndexes);
+  });
+
   project.demands.forEach((demand, demandIndex) => {
     arcs.forEach((arc, arcIndex) => variables.push({ name: `f_${demandIndex}_${arcIndex}`, demandId: demand.id, linkId: arc.linkId, direction: arc.direction }));
   });
@@ -192,19 +237,18 @@ export function buildTrafficAllocationLP(project: NetworkProject): { problem: st
   project.demands.forEach((demand, demandIndex) => {
     project.nodes.forEach((node, nodeIndex) => {
       const terms: Array<[number, string]> = [];
-      arcs.forEach((arc, arcIndex) => {
-        if (arc.source === node.id) terms.push([1, `f_${demandIndex}_${arcIndex}`]);
-        if (arc.target === node.id) terms.push([-1, `f_${demandIndex}_${arcIndex}`]);
-      });
+      for (const arcIndex of outgoingArcIndexes.get(node.id) ?? []) terms.push([1, `f_${demandIndex}_${arcIndex}`]);
+      for (const arcIndex of incomingArcIndexes.get(node.id) ?? []) terms.push([-1, `f_${demandIndex}_${arcIndex}`]);
       const rhs = node.id === demand.source ? demand.bandwidthGbps : node.id === demand.target ? -demand.bandwidthGbps : 0;
       lines.push(` flow_${demandIndex}_${nodeIndex}: ${expression(terms)} = ${round(rhs)}`);
     });
   });
   project.links.forEach((link, linkIndex) => {
     if (link.available === false) return;
+    const arcIndexes = arcIndexesByLink.get(link.id) ?? [];
     const terms: Array<[number, string]> = [];
     project.demands.forEach((_, demandIndex) => {
-      arcs.forEach((arc, arcIndex) => { if (arc.linkId === link.id) terms.push([1, `f_${demandIndex}_${arcIndex}`]); });
+      for (const arcIndex of arcIndexes) terms.push([1, `f_${demandIndex}_${arcIndex}`]);
     });
     terms.push([-link.capacityGbps, 't']);
     lines.push(` capacity_${linkIndex}: ${expression(terms)} <= 0`);
@@ -268,6 +312,29 @@ export function verifyTrafficAllocationSolution(
 
 export async function optimizeRouting(project: NetworkProject, options: SolverRunOptions = {}): Promise<TrafficAllocationResult> {
   const timeLimitMs = Math.max(50, options.timeLimitMs ?? 5_000);
+  const estimate = estimateTrafficAllocationLP(project);
+  if (!estimate.recommended && !options.allowLargeModel) {
+    return {
+      diagnostics: {
+        solver: HIGHS_SOLVER_NAME,
+        solverVersion: HIGHS_PACKAGE_VERSION,
+        status: 'Not recommended at this scale',
+        proof: 'unknown',
+        objectiveValue: null,
+        mipGap: null,
+        timedOut: false,
+        timeLimitMs,
+        runtimeMs: 0,
+        modelHash: modelHash(project),
+        scenarioHashes: [scenarioHash(null)],
+        problemHash: fnv1a(`routing-lp-guard:${estimate.flowVariables}:${estimate.constraints}`),
+        message: estimate.reason,
+      },
+      maxUtilizationPct: null,
+      allocations: [],
+      verification: null,
+    };
+  }
   const { problem, variables } = buildTrafficAllocationLP(project);
   const startedAt = performanceNow();
   const highs = await loadHighs(options);
@@ -300,6 +367,37 @@ function selectedPatches(requirements: CapacityPlanRequirements): Array<Scenario
   if (requirements.includeBaseline ?? true) patches.push(null);
   for (const patch of requirements.scenarioPatches ?? []) if (!patches.some((item) => scenarioHash(item) === scenarioHash(patch))) patches.push(patch);
   return patches.length ? patches : [null];
+}
+
+export interface CapacityMILPEstimate {
+  decisionVariables: number;
+  scenarioCount: number;
+  decisionScenarioProduct: number;
+  estimatedConstraints: number;
+  recommended: boolean;
+  reason: string;
+}
+
+export function estimateCapacityMILP(project: NetworkProject, requirementsInput: CapacityPlanRequirements = {}): CapacityMILPEstimate {
+  const requirements = normalizedRequirements(requirementsInput);
+  const locked = new Set(requirements.lockedLinkIds);
+  const decisionVariables = project.links.reduce((sum, link) => sum + (locked.has(link.id) ? 0 : (link.upgradeOptions ?? []).filter((option) => option.capacityGbps > link.capacityGbps + 1e-9).length), 0);
+  const scenarioCount = selectedPatches(requirementsInput).length;
+  const decisionScenarioProduct = decisionVariables * scenarioCount;
+  const estimatedConstraints = project.links.filter((link) => (link.upgradeOptions ?? []).some((option) => option.capacityGbps > link.capacityGbps + 1e-9) && !locked.has(link.id)).length
+    + (requirements.budgetCostUnits === null ? 0 : 1)
+    + scenarioCount * project.links.length;
+  const recommended = decisionScenarioProduct <= CAPACITY_MILP_RECOMMENDED_MAX_DECISION_SCENARIO_PRODUCT;
+  return {
+    decisionVariables,
+    scenarioCount,
+    decisionScenarioProduct,
+    estimatedConstraints,
+    recommended,
+    reason: recommended
+      ? `Estimated ${decisionVariables.toLocaleString()} decisions across ${scenarioCount.toLocaleString()} scenario(s) are within the measured Phase 3.5C capacity-MILP envelope.`
+      : `Estimated decision×scenario workload ${decisionScenarioProduct.toLocaleString()} exceeds the measured Phase 3.5C capacity-MILP envelope of ${CAPACITY_MILP_RECOMMENDED_MAX_DECISION_SCENARIO_PRODUCT.toLocaleString()}.`,
+  };
 }
 
 export function buildCapacityUpgradeMILP(project: NetworkProject, requirementsInput: CapacityPlanRequirements = {}): {
@@ -363,6 +461,19 @@ function syntheticDiagnostics(project: NetworkProject, patches: Array<ScenarioPa
 
 export async function optimizeCapacityPlan(project: NetworkProject, requirementsInput: CapacityPlanRequirements = {}, options: SolverRunOptions = {}): Promise<CapacityOptimizationResult> {
   const timeLimitMs = Math.max(50, options.timeLimitMs ?? 8_000);
+  const capacityEstimate = estimateCapacityMILP(project, requirementsInput);
+  if (!capacityEstimate.recommended && !options.allowLargeModel) {
+    const requirements = normalizedRequirements(requirementsInput);
+    const patches = selectedPatches(requirementsInput);
+    const problem = `capacity-milp-guard:${capacityEstimate.decisionVariables}:${capacityEstimate.scenarioCount}`;
+    return {
+      diagnostics: syntheticDiagnostics(project, patches, problem, timeLimitMs, 'Not recommended at this scale', 'unknown', capacityEstimate.reason),
+      candidate: null,
+      selectedUpgrades: [],
+      requirements,
+      scenarioHashes: patches.map((patch) => scenarioHash(patch)),
+    };
+  }
   const built = buildCapacityUpgradeMILP(project, requirementsInput);
   const scenarioHashes = built.patches.map((patch) => scenarioHash(patch));
   if (built.preflightError) return { diagnostics: syntheticDiagnostics(project, built.patches, built.problem, timeLimitMs, 'Infeasible', 'infeasible', built.preflightError), candidate: null, selectedUpgrades: [], requirements: built.requirements, scenarioHashes };
