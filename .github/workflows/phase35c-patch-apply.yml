@@ -20,9 +20,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          PATCH_B64="planning/.phase35c-instrumentation.gz.b64"
+          PATCH_B64="planning/.phase35c-fixes.gz.b64"
           if [[ ! -f "$PATCH_B64" ]]; then
-            echo "No staged instrumentation patch present."
+            echo "No staged fixes patch present."
             exit 0
           fi
           base64 -d "$PATCH_B64" | gzip -d > /tmp/phase35c.patch
@@ -35,5 +35,5 @@ jobs:
             echo "Patch produced no changes."
             exit 0
           fi
-          git commit -m "feat(phase-3.5c): add measured component instrumentation"
+          git commit -m "fix(phase-3.5c): enforce measured browser N-1 envelope"
           git push origin HEAD:tmp/phase35c-patch-apply
