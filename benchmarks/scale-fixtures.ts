@@ -66,10 +66,11 @@ export function generateScaleProject(options: GenerateScaleOptions): NetworkProj
     if (a === b || linkKeys.has(key) || links.length >= options.links) return;
     linkKeys.add(key);
     const index = links.length;
+    const capacityGbps = 100 + (index % 4) * 50;
     const upgrades = rng() < (options.upgradeOptionDensity ?? 0.35)
       ? [
-          { capacityGbps: 200, cost: 4 + (index % 7) },
-          { capacityGbps: 400, cost: 8 + (index % 11) },
+          { capacityGbps: capacityGbps + 100, cost: 4 + (index % 7) },
+          { capacityGbps: capacityGbps + 300, cost: 8 + (index % 11) },
         ]
       : undefined;
     links.push({
@@ -77,7 +78,7 @@ export function generateScaleProject(options: GenerateScaleOptions): NetworkProj
       source: nodes[sourceIndex].id,
       target: nodes[targetIndex].id,
       bidirectional: true,
-      capacityGbps: 100 + (index % 4) * 50,
+      capacityGbps,
       latencyMs: 1 + (index % 17),
       weight: 1 + (index % 9),
       available: true,
