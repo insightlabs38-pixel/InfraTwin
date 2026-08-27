@@ -8,7 +8,7 @@ type ScenarioSelectorProps = {
 
 export function ScenarioSelector({ scenarios, selectedId, onSelect }: ScenarioSelectorProps) {
   return (
-    <div className="scenario-list" role="list" aria-label="Bundled network scenarios">
+    <div className="scenario-list" role="list" aria-label="Example and reference networks">
       {scenarios.map((item) => (
         <button
           key={item.id}
@@ -19,7 +19,7 @@ export function ScenarioSelector({ scenarios, selectedId, onSelect }: ScenarioSe
           aria-pressed={selectedId === item.id}
           onClick={() => onSelect(item.id)}
         >
-          <span className="scenario-card-kicker">{item.kind === 'blank' ? 'Workspace' : item.kind}</span>
+          <span className="scenario-card-kicker">{item.kind === 'flagship' ? 'Realistic synthetic model' : item.kind === 'blank' ? 'Workspace' : 'Reference network'}</span>
           <strong>{item.title}</strong>
           <small>{item.description}</small>
         </button>

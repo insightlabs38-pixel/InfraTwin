@@ -35,9 +35,9 @@ import {
   type WebMCPTool,
 } from '../packages/webmcp/src/index.ts';
 
-test('Level 1 bundles the three polished demo scenarios plus blank', () => {
+test('bundled scenarios preserve the three Level 1 demos plus blank alongside the Phase 3.5B flagship', () => {
   const scenarios = listBundledScenarios();
-  assert.deepEqual(scenarios.map((item) => item.id), ['maintenance-trap', 'growth-wall', 'resilience-gap', 'blank']);
+  assert.deepEqual(scenarios.map((item) => item.id), ['continental-service-network', 'maintenance-trap', 'growth-wall', 'resilience-gap', 'blank']);
   for (const scenario of scenarios) assert.equal(validateNetworkProject(scenario.project).valid, true);
 });
 

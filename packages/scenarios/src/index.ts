@@ -1,8 +1,8 @@
-import type { ChangePlan, NetworkProject, PlanChange, ScenarioPatch } from '../../model/src/index.ts';
-import { addPlanChange, cloneProject, createChangePlan } from '../../model/src/index.ts';
+import type { ChangePlan, LinkModel, NetworkProject, NodeModel, PlanChange, ScenarioPatch } from '../../model/src/index.ts';
+import { addPlanChange, cloneProject, createChangePlan, setPlanConstraint, setPlanLinkLocked } from '../../model/src/index.ts';
 
-export type BundledScenarioId = 'maintenance-trap' | 'growth-wall' | 'resilience-gap' | 'blank';
-export type ScenarioKind = 'maintenance' | 'growth' | 'resilience' | 'blank';
+export type BundledScenarioId = 'continental-service-network' | 'maintenance-trap' | 'growth-wall' | 'resilience-gap' | 'blank';
+export type ScenarioKind = 'flagship' | 'maintenance' | 'growth' | 'resilience' | 'blank';
 
 export interface ScenarioDefinition {
   id: BundledScenarioId;
@@ -21,6 +21,163 @@ const serviceClasses = [
   { id: 'gold', name: 'Gold', priority: 100, maxUtilizationPct: 80, allowShedding: false },
   { id: 'silver', name: 'Silver', priority: 50, maxUtilizationPct: 90, allowShedding: false },
 ];
+
+const flagshipServiceClasses = [
+  { id: 'gold', name: 'Gold interactive', priority: 100, maxUtilizationPct: 80, allowShedding: false },
+  { id: 'silver', name: 'Silver platform', priority: 60, maxUtilizationPct: 90, allowShedding: false },
+  { id: 'bronze', name: 'Bronze batch', priority: 20, maxUtilizationPct: 95, allowShedding: true },
+];
+
+const TEMPLATE_TIME = '2026-01-01T00:00:00.000Z';
+
+interface FlagshipRegionSpec {
+  id: string;
+  name: string;
+  cities: Array<{ code: string; name: string }>;
+  edgeCount: number;
+}
+
+const FLAGSHIP_REGIONS: FlagshipRegionSpec[] = [
+  { id: 'Northeast', name: 'Northeast', edgeCount: 18, cities: [{ code: 'NYC', name: 'New York' }, { code: 'BOS', name: 'Boston' }, { code: 'PHL', name: 'Philadelphia' }, { code: 'PIT', name: 'Pittsburgh' }] },
+  { id: 'Southeast', name: 'Southeast', edgeCount: 18, cities: [{ code: 'ATL', name: 'Atlanta' }, { code: 'CLT', name: 'Charlotte' }, { code: 'MIA', name: 'Miami' }, { code: 'RDU', name: 'Raleigh' }] },
+  { id: 'Central', name: 'Central', edgeCount: 17, cities: [{ code: 'CHI', name: 'Chicago' }, { code: 'STL', name: 'St. Louis' }, { code: 'MSP', name: 'Minneapolis' }, { code: 'KC', name: 'Kansas City' }] },
+  { id: 'Mountain', name: 'Mountain', edgeCount: 17, cities: [{ code: 'DEN', name: 'Denver' }, { code: 'SLC', name: 'Salt Lake City' }, { code: 'PHX', name: 'Phoenix' }, { code: 'ABQ', name: 'Albuquerque' }] },
+  { id: 'West', name: 'West', edgeCount: 17, cities: [{ code: 'SEA', name: 'Seattle' }, { code: 'SFO', name: 'San Francisco' }, { code: 'LAX', name: 'Los Angeles' }, { code: 'PDX', name: 'Portland' }] },
+  { id: 'Cloud', name: 'Cloud', edgeCount: 17, cities: [{ code: 'IAD', name: 'Ashburn Cloud' }, { code: 'DFW', name: 'Dallas Cloud' }, { code: 'ORD', name: 'Chicago Cloud' }, { code: 'SJC', name: 'San Jose Cloud' }] },
+];
+
+
+function buildFlagshipProject(): NetworkProject {
+  const nodes: NodeModel[] = [];
+  const regionNodes = new Map<string, { cores: NodeModel[]; edges: NodeModel[] }>();
+
+  for (const region of FLAGSHIP_REGIONS) {
+    const cores = region.cities.map((city) => ({ id: `${city.code}-CORE-1`, name: `${city.name} Core`, region: region.name, type: 'core', available: true }));
+    const edges: NodeModel[] = [];
+    for (let index = 0; index < region.edgeCount; index += 1) {
+      const city = region.cities[index % region.cities.length];
+      edges.push({ id: `${city.code}-EDGE-${String(index + 1).padStart(2, '0')}`, name: `${city.name} Edge ${index + 1}`, region: region.name, type: 'edge', available: true });
+    }
+    nodes.push(...cores, ...edges);
+    regionNodes.set(region.id, { cores, edges });
+  }
+
+  const links: LinkModel[] = [];
+  for (const region of FLAGSHIP_REGIONS) {
+    const group = regionNodes.get(region.id)!;
+    for (let left = 0; left < group.cores.length; left += 1) {
+      for (let right = left + 1; right < group.cores.length; right += 1) {
+        links.push({
+          id: `INTRA-${region.id.slice(0, 2).toUpperCase()}-${left + 1}-${right + 1}`,
+          source: group.cores[left].id,
+          target: group.cores[right].id,
+          bidirectional: true,
+          capacityGbps: 160,
+          weight: 0.12 + (right - left) * 0.01,
+          available: true,
+        });
+      }
+    }
+    group.edges.forEach((edge, index) => {
+      const primary = group.cores[index % group.cores.length];
+      const backup = group.cores[(index + 1 + (index % 2)) % group.cores.length];
+      const baseCapacity = 40 + (index % 3) * 20;
+      links.push({ id: `ACCESS-${edge.id}-A`, source: edge.id, target: primary.id, bidirectional: true, capacityGbps: baseCapacity, weight: 0.2, available: true });
+      links.push({ id: `ACCESS-${edge.id}-B`, source: edge.id, target: backup.id, bidirectional: true, capacityGbps: baseCapacity, weight: 0.38, available: true });
+    });
+  }
+
+  const crossPairs: Array<{ a: string; b: string; count: number; primaryWeight: number; primaryCapacity: number }> = [
+    { a: 'Northeast', b: 'Southeast', count: 6, primaryWeight: 1.05, primaryCapacity: 180 },
+    { a: 'Southeast', b: 'Central', count: 6, primaryWeight: 1.05, primaryCapacity: 80 },
+    { a: 'Central', b: 'Mountain', count: 6, primaryWeight: 1.0, primaryCapacity: 200 },
+    { a: 'Mountain', b: 'West', count: 6, primaryWeight: 1.0, primaryCapacity: 200 },
+    { a: 'West', b: 'Cloud', count: 6, primaryWeight: 1.0, primaryCapacity: 220 },
+    { a: 'Cloud', b: 'Northeast', count: 6, primaryWeight: 1.1, primaryCapacity: 220 },
+    { a: 'Northeast', b: 'Central', count: 4, primaryWeight: 0.85, primaryCapacity: 100 },
+    { a: 'Southeast', b: 'Mountain', count: 4, primaryWeight: 1.15, primaryCapacity: 200 },
+    { a: 'Central', b: 'West', count: 4, primaryWeight: 1.15, primaryCapacity: 200 },
+    { a: 'Mountain', b: 'Cloud', count: 4, primaryWeight: 1.2, primaryCapacity: 220 },
+    { a: 'Northeast', b: 'West', count: 4, primaryWeight: 1.25, primaryCapacity: 220 },
+    { a: 'Southeast', b: 'Cloud', count: 4, primaryWeight: 1.25, primaryCapacity: 220 },
+  ];
+  const endpointPairs = [[0, 0], [1, 1], [2, 2], [3, 3], [0, 2], [2, 0]] as const;
+  const pairCode = (value: string) => value === 'Northeast' ? 'NE' : value === 'Southeast' ? 'SE' : value === 'Central' ? 'CE' : value === 'Mountain' ? 'MT' : value === 'West' ? 'WE' : 'CL';
+
+  for (const pair of crossPairs) {
+    const left = regionNodes.get(pair.a)!.cores;
+    const right = regionNodes.get(pair.b)!.cores;
+    for (let index = 0; index < pair.count; index += 1) {
+      const [leftIndex, rightIndex] = endpointPairs[index];
+      const id = `BB-${pairCode(pair.a)}-${pairCode(pair.b)}-${String(index + 1).padStart(2, '0')}`;
+      const primary = index === 0;
+      const capacityGbps = primary ? pair.primaryCapacity : 140 + (index % 3) * 40;
+      const link: LinkModel = {
+        id,
+        source: left[leftIndex].id,
+        target: right[rightIndex].id,
+        bidirectional: true,
+        capacityGbps,
+        weight: primary ? pair.primaryWeight : 3.3 + index * 0.22,
+        available: true,
+      };
+      if (id === 'BB-SE-CE-01') link.upgradeOptions = [{ capacityGbps: 120, cost: 5 }, { capacityGbps: 160, cost: 8 }, { capacityGbps: 240, cost: 12 }];
+      else if (id === 'BB-NE-CE-01') link.upgradeOptions = [{ capacityGbps: 160, cost: 5 }, { capacityGbps: 240, cost: 9 }];
+      else if (primary && pair.primaryCapacity <= 200) link.upgradeOptions = [{ capacityGbps: Math.max(240, pair.primaryCapacity + 80), cost: 7 }];
+      links.push(link);
+    }
+  }
+
+  const demands: NetworkProject['demands'] = [];
+  const neEdges = regionNodes.get('Northeast')!.edges;
+  const seEdges = regionNodes.get('Southeast')!.edges;
+  const ceEdges = regionNodes.get('Central')!.edges;
+  for (let index = 0; index < 10; index += 1) {
+    demands.push({ id: `PAY-NECE-${String(index + 1).padStart(2, '0')}`, name: `Payments east-central ${index + 1}`, source: neEdges[index].id, target: ceEdges[index].id, bandwidthGbps: 4, serviceClassId: 'gold' });
+  }
+  for (let index = 0; index < 5; index += 1) {
+    demands.push({ id: `PLAT-SECE-${String(index + 1).padStart(2, '0')}`, name: `Southeast platform ${index + 1}`, source: seEdges[index].id, target: ceEdges[index + 10].id, bandwidthGbps: 4, serviceClassId: index < 2 ? 'gold' : 'silver' });
+  }
+
+  const safePairs: Array<[string, string]> = [
+    ['Central', 'Mountain'], ['Mountain', 'West'], ['West', 'Cloud'], ['Cloud', 'Northeast'], ['Southeast', 'Mountain'],
+    ['Central', 'West'], ['Mountain', 'Cloud'], ['Northeast', 'West'], ['Southeast', 'Cloud'], ['Northeast', 'Southeast'],
+  ];
+  const bandwidths = [0.75, 1.25, 1.75, 2.25, 3];
+  const classes = ['gold', 'silver', 'bronze'];
+  for (let index = 0; index < 81; index += 1) {
+    const [sourceRegion, targetRegion] = safePairs[index % safePairs.length];
+    const sourceEdges = regionNodes.get(sourceRegion)!.edges;
+    const targetEdges = regionNodes.get(targetRegion)!.edges;
+    demands.push({
+      id: `FLOW-${String(index + 1).padStart(3, '0')}`,
+      name: `${sourceRegion} to ${targetRegion} service ${index + 1}`,
+      source: sourceEdges[(index * 3 + 1) % sourceEdges.length].id,
+      target: targetEdges[(index * 5 + 2) % targetEdges.length].id,
+      bandwidthGbps: bandwidths[index % bandwidths.length],
+      serviceClassId: classes[index % classes.length],
+    });
+  }
+
+  return {
+    schemaVersion: '0.1',
+    id: 'continental-service-network-v1',
+    name: 'Continental Service Network',
+    nodes,
+    links,
+    demands,
+    serviceClasses: flagshipServiceClasses,
+    routingProfile: { mode: 'single-shortest-path' },
+    metadata: {
+      description: 'Realistic synthetic network planning model with six logical regions, dual-homed edge sites, redundant regional cores, and a multi-corridor backbone.',
+      suggestedPrompt: 'Open Saturday Backbone Maintenance, inspect the distant Southeast–Central overload, and evaluate an upgrade without changing the base network.',
+      realisticSynthetic: true,
+      topologyScale: { nodes: 128, links: 304, demands: 96, regions: 6 },
+    },
+  };
+}
+
+const continentalServiceNetwork = buildFlagshipProject();
 
 const maintenanceTrap: NetworkProject = {
   schemaVersion: '0.1',
@@ -136,18 +293,25 @@ const blank: NetworkProject = {
   demands: [],
   serviceClasses: [],
   routingProfile: { mode: 'ecmp' },
-  metadata: { description: 'A valid empty project for manual import or construction.', suggestedPrompt: 'Import a project JSON file to begin.' },
+  metadata: { description: 'A valid empty project for manual import or construction.', suggestedPrompt: 'Import a project JSON or CSV bundle to begin.' },
 };
-
-const TEMPLATE_TIME = '2026-01-01T00:00:00.000Z';
 
 function buildPlanTemplate(project: NetworkProject, id: string, name: string, changes: PlanChange[]): ChangePlan {
   let plan = createChangePlan(project, name, { id, now: TEMPLATE_TIME });
   for (const change of changes) plan = addPlanChange(plan, change, TEMPLATE_TIME);
-  // A saved template opens as a draft artifact; history records the semantic template changes.
   plan.status = 'draft';
   return plan;
 }
+
+const flagshipGrowthDemandIds = Array.from({ length: 10 }, (_, index) => `PAY-NECE-${String(index + 1).padStart(2, '0')}`);
+let flagshipPlanTemplate = buildPlanTemplate(continentalServiceNetwork, 'template-saturday-backbone-maintenance', 'Saturday Backbone Maintenance', [
+  { id: 'template-change-flagship-outage', actor: 'human', type: 'disable_link', target: { kind: 'link', id: 'BB-NE-CE-01' }, payload: {}, createdAt: TEMPLATE_TIME },
+  { id: 'template-change-flagship-growth', actor: 'human', type: 'demand_growth', target: { kind: 'demands', ids: flagshipGrowthDemandIds }, payload: { multiplier: 1.35 }, createdAt: TEMPLATE_TIME },
+]);
+flagshipPlanTemplate = setPlanConstraint(flagshipPlanTemplate, 'targetUtilizationPct', 80, TEMPLATE_TIME);
+flagshipPlanTemplate = setPlanConstraint(flagshipPlanTemplate, 'budgetCostUnits', 12, TEMPLATE_TIME);
+flagshipPlanTemplate = setPlanLinkLocked(flagshipPlanTemplate, 'BB-SE-CE-02', true, TEMPLATE_TIME);
+flagshipPlanTemplate.status = 'draft';
 
 const maintenancePlanTemplate = buildPlanTemplate(maintenanceTrap, 'template-maintenance-chi-dal', 'CHI–DAL maintenance', [
   { id: 'template-change-maintenance-l1', actor: 'human', type: 'disable_link', target: { kind: 'link', id: 'L1' }, payload: {}, createdAt: TEMPLATE_TIME },
@@ -162,6 +326,15 @@ const resiliencePlanTemplate = buildPlanTemplate(resilienceGap, 'template-resili
 ]);
 
 const definitions: Record<BundledScenarioId, ScenarioDefinition> = {
+  'continental-service-network': {
+    id: 'continental-service-network', title: 'Continental Service Network', kind: 'flagship',
+    description: String(continentalServiceNetwork.metadata?.description ?? ''),
+    suggestedPrompt: String(continentalServiceNetwork.metadata?.suggestedPrompt ?? ''),
+    project: continentalServiceNetwork,
+    growthDemandIds: flagshipGrowthDemandIds,
+    defaultGrowthMultiplier: 1.35,
+    changePlanTemplate: flagshipPlanTemplate,
+  },
   'maintenance-trap': {
     id: 'maintenance-trap', title: 'Maintenance Trap', kind: 'maintenance',
     description: String(maintenanceTrap.metadata?.description ?? ''),
@@ -194,19 +367,28 @@ const definitions: Record<BundledScenarioId, ScenarioDefinition> = {
   },
 };
 
+function copyDefinition(definition: ScenarioDefinition): ScenarioDefinition {
+  return {
+    ...definition,
+    project: cloneProject(definition.project),
+    recommendedPatch: definition.recommendedPatch ? JSON.parse(JSON.stringify(definition.recommendedPatch)) as ScenarioPatch : undefined,
+    changePlanTemplate: definition.changePlanTemplate ? JSON.parse(JSON.stringify(definition.changePlanTemplate)) as ChangePlan : undefined,
+  };
+}
+
 export function listBundledScenarios(): ScenarioDefinition[] {
-  return (['maintenance-trap', 'growth-wall', 'resilience-gap', 'blank'] as BundledScenarioId[]).map((id) => ({ ...definitions[id], project: cloneProject(definitions[id].project), changePlanTemplate: definitions[id].changePlanTemplate ? JSON.parse(JSON.stringify(definitions[id].changePlanTemplate)) as ChangePlan : undefined }));
+  return (['continental-service-network', 'maintenance-trap', 'growth-wall', 'resilience-gap', 'blank'] as BundledScenarioId[]).map((id) => copyDefinition(definitions[id]));
 }
 
 export function getScenarioDefinition(id: BundledScenarioId): ScenarioDefinition {
-  const definition = definitions[id];
-  return { ...definition, project: cloneProject(definition.project), recommendedPatch: definition.recommendedPatch ? JSON.parse(JSON.stringify(definition.recommendedPatch)) as ScenarioPatch : undefined, changePlanTemplate: definition.changePlanTemplate ? JSON.parse(JSON.stringify(definition.changePlanTemplate)) as ChangePlan : undefined };
+  return copyDefinition(definitions[id]);
 }
 
 export function loadScenario(id: BundledScenarioId): NetworkProject {
   return cloneProject(definitions[id].project);
 }
 
+export function loadFlagshipNetwork(): NetworkProject { return loadScenario('continental-service-network'); }
 export function loadMaintenanceTrap(): NetworkProject { return loadScenario('maintenance-trap'); }
 export function loadGrowthWall(): NetworkProject { return loadScenario('growth-wall'); }
 export function loadResilienceGap(): NetworkProject { return loadScenario('resilience-gap'); }

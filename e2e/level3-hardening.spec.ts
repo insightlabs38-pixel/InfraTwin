@@ -10,6 +10,14 @@ async function openWorkbench(page: Page) {
   page.off('pageerror', onPageError); page.off('console', onConsole);
 }
 async function waitForOptimizer(page: Page) { await expect(page.getByTestId('optimizer-status')).toContainText(/ready|HiGHS WASM/i, { timeout: 30_000 }); }
+
+async function importJsonThroughReview(page: Page, path: string): Promise<void> {
+  await page.getByTestId('import-json').click();
+  await page.getByRole('button', { name: 'Canonical JSON' }).click();
+  await page.getByTestId('json-import-file').setInputFiles(path);
+  await expect(page.getByTestId('import-review')).toBeVisible();
+  await page.getByTestId('open-imported-network').click();
+}
 function largeCancellationProject() {
   const nodeCount = 480;
   return { schemaVersion: '0.1' as const, id: 'e2e-cancellation-network', name: 'E2E Cancellation Network', nodes: Array.from({ length: nodeCount }, (_, index) => ({ id: `N${index}`, name: `Node ${index}`, x: 40 + (index % 20) * 30, y: 40 + Math.floor(index / 20) * 18 })), links: Array.from({ length: nodeCount - 1 }, (_, index) => ({ id: `E${index}`, source: `N${index}`, target: `N${index + 1}`, bidirectional: true, capacityGbps: 10, weight: 1, available: true })), demands: [{ id: 'D1', name: 'Long-haul demand', source: 'N0', target: `N${nodeCount - 1}`, bandwidthGbps: 5, serviceClassId: 'gold' }], serviceClasses: [{ id: 'gold', name: 'Gold', priority: 100, maxUtilizationPct: 100, allowShedding: false }], routingProfile: { mode: 'single-shortest-path' as const }, metadata: { description: 'Synthetic browser-only cancellation fixture.' } };
@@ -33,12 +41,12 @@ test('Resilience Gap N-1 ranks R2 and replay is explicit while optimizer proposa
 });
 
 test('import/export base round-trip and imported Change Plan remain browser-local', async ({ page }, testInfo) => {
-  await openWorkbench(page); const [download] = await Promise.all([page.waitForEvent('download'), page.getByTestId('export-json').click()]); const path = await download.path(); expect(path).toBeTruthy(); const exported = JSON.parse(await readFile(path!, 'utf8')) as Record<string, unknown>; expect(exported.id).toBe('maintenance-trap-l1');
-  exported.name = 'Imported E2E Network'; const importPath = testInfo.outputPath('imported-project.json'); await writeFile(importPath, JSON.stringify(exported)); await page.getByTestId('import-file').setInputFiles(importPath); await expect(page.getByRole('heading', { level: 1 })).toHaveText('Imported E2E Network'); await expect(page.getByTestId('verdict')).toHaveText('DRAFT'); await page.getByTestId('analyze-plan').click(); await expect(page.getByTestId('verdict')).toHaveText('PASS');
+  await openWorkbench(page); await page.getByTestId('scenario-maintenance-trap').click(); const [download] = await Promise.all([page.waitForEvent('download'), page.getByTestId('export-json').click()]); const path = await download.path(); expect(path).toBeTruthy(); const exported = JSON.parse(await readFile(path!, 'utf8')) as Record<string, unknown>; expect(exported.id).toBe('maintenance-trap-l1');
+  exported.name = 'Imported E2E Network'; const importPath = testInfo.outputPath('imported-project.json'); await writeFile(importPath, JSON.stringify(exported)); await importJsonThroughReview(page, importPath); await expect(page.getByRole('heading', { level: 1 })).toHaveText('Imported E2E Network'); await expect(page.getByTestId('verdict')).toHaveText('DRAFT'); await page.getByTestId('analyze-plan').click(); await expect(page.getByTestId('verdict')).toHaveText('PASS');
 });
 
 test('cancellation and plan/network switching prevent stale N-1 publication', async ({ page }, testInfo) => {
-  await openWorkbench(page); const importPath = testInfo.outputPath('large-project.json'); await writeFile(importPath, JSON.stringify(largeCancellationProject())); await page.getByTestId('import-file').setInputFiles(importPath); await expect(page.getByRole('heading', { level: 1 })).toHaveText('E2E Cancellation Network');
+  await openWorkbench(page); const importPath = testInfo.outputPath('large-project.json'); await writeFile(importPath, JSON.stringify(largeCancellationProject())); await importJsonThroughReview(page, importPath); await expect(page.getByRole('heading', { level: 1 })).toHaveText('E2E Cancellation Network');
   await page.getByTestId('run-resilience').click(); await expect(page.getByTestId('cancel-resilience')).toBeVisible(); await page.getByTestId('cancel-resilience').click(); await expect(page.getByTestId('resilience-status')).toContainText('cancelled', { timeout: 15_000 }); await expect(page.getByTestId('contingency-list')).toHaveCount(0);
   await page.getByTestId('run-resilience').click(); await expect(page.getByTestId('cancel-resilience')).toBeVisible(); await page.getByTestId('new-plan').click(); await page.waitForTimeout(500); await expect(page.getByTestId('contingency-list')).toHaveCount(0);
   await page.getByTestId('run-resilience').click(); await expect(page.getByTestId('cancel-resilience')).toBeVisible(); await page.getByTestId('scenario-maintenance-trap').click(); await page.waitForTimeout(500); await expect(page.getByTestId('contingency-list')).toHaveCount(0); await expect(page.getByTestId('verdict')).toHaveText('DRAFT');

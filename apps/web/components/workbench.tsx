@@ -23,7 +23,6 @@ import {
   setPlanConstraint,
   setPlanLinkLocked,
   setPlanNodeLocked,
-  validateNetworkProject,
 } from '@infratwin/model';
 import {
   analyzeBottleneck,
@@ -51,6 +50,8 @@ import { AnalysisJourney } from './analysis-journey';
 import { ChangePlanPanel } from './change-plan-panel';
 import { ScenarioSelector } from './scenario-selector';
 import { TopologyCanvas } from './topology-canvas';
+import { ImportNetworkDialog } from './import-network-dialog';
+import { applyUpgradeProfile } from '../lib/upgrade-catalog';
 import {
   CANDIDATE_TOOL_NAMES,
   COUNTEREXAMPLE_TOOL_NAMES,
@@ -79,12 +80,12 @@ function createBrowserWorker(): ContingencyWorkerLike { return new Worker(new UR
 const networkTemplates = listBundledScenarios();
 type SelectedScenarioId = BundledScenarioId | 'imported';
 const initialCompute: ComputeCapabilities = { workerSupported: false, hardwareConcurrency: 1, recommendedWorkerCount: 1, sharedArrayBufferSupported: false, crossOriginIsolated: false, executionMode: 'async-fallback' };
-const initialProject = loadScenario('maintenance-trap');
+const initialProject = loadScenario('continental-service-network');
 
 export function Workbench() {
-  const [selectedScenarioId, setSelectedScenarioId] = useState<SelectedScenarioId>('maintenance-trap');
+  const [selectedScenarioId, setSelectedScenarioId] = useState<SelectedScenarioId>('continental-service-network');
   const [project, setProject] = useState<NetworkProject>(() => cloneProject(initialProject));
-  const [plan, setPlan] = useState<ChangePlan>(() => createChangePlan(initialProject, 'Maintenance planning', { id: 'plan-maintenance-initial' }));
+  const [plan, setPlan] = useState<ChangePlan>(() => createChangePlan(initialProject, 'Backbone change plan', { id: 'plan-flagship-initial' }));
   const [ephemeralPatch, setEphemeralPatch] = useState<ScenarioPatch | null>(null);
   const [publishedPlanAnalysis, setPublishedPlanAnalysis] = useState<ChangePlanAnalysis | null>(null);
   const [candidate, setCandidate] = useState<CandidatePlan | null>(null);
@@ -110,7 +111,7 @@ export function Workbench() {
   const [routingOptimization, setRoutingOptimization] = useState<TrafficAllocationResult | null>(null);
   const [candidateVerification, setCandidateVerification] = useState<CandidateVerification | null>(null);
   const [candidateVerificationStamp, setCandidateVerificationStamp] = useState<PlanRevisionStamp | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
   const directRunControllerRef = useRef<AbortController | null>(null);
   const optimizerControllerRef = useRef<AbortController | null>(null);
   const analysisEpochRef = useRef(0);
@@ -139,6 +140,7 @@ export function Workbench() {
   const routeByDemand = useMemo(() => new Map(analysis.routing.routes.map((route) => [route.demandId, route])), [analysis.routing.routes]);
   const selectedCanonicalLink = useMemo(() => selectedLinkId ? project.links.find((link) => link.id === selectedLinkId) : undefined, [project.links, selectedLinkId]);
   const selectedCanonicalNode = useMemo(() => selectedNodeId ? project.nodes.find((node) => node.id === selectedNodeId) : undefined, [project.nodes, selectedNodeId]);
+  const selectedDemandId = selectedEvidence?.type === 'demand' ? (selectedEvidence.demandId ?? selectedEvidence.id) : null;
   const analysisFresh = Boolean(publishedPlanAnalysis && isPlanEvidenceFresh(publishedPlanAnalysis.stamp, project, plan));
   const n1Fresh = Boolean(contingencyStamp && isPlanEvidenceFresh(contingencyStamp, project, plan));
   const verificationFresh = Boolean(candidateVerification && candidateVerificationStamp && isPlanRevisionFresh(candidateVerificationStamp, project, plan));
@@ -296,6 +298,24 @@ export function Workbench() {
   };
   const handleGrowth = (demandIds: string[], multiplier: number) => mutatePlan((current) => addPlanChange(current, { id: nextChangeId('growth'), actor: 'human', type: 'demand_growth', target: { kind: 'demands', ids: [...new Set(demandIds)].sort() }, payload: { multiplier }, createdAt: new Date().toISOString() }));
 
+  const batchPlanOutage = (linkIds: string[]) => mutatePlan((current) => {
+    let next = current;
+    for (const linkId of [...new Set(linkIds)].sort()) {
+      for (const item of next.changes.filter((change) => (change.type === 'disable_link' || change.type === 'enable_link') && change.target.id === linkId)) next = removePlanChange(next, item.id);
+      next = addPlanChange(next, { id: nextChangeId('link-availability'), actor: 'human', type: 'disable_link', target: { kind: 'link', id: linkId }, payload: {}, createdAt: new Date().toISOString() });
+    }
+    return next;
+  });
+  const batchLockLinks = (linkIds: string[], locked: boolean) => mutatePlan((current) => [...new Set(linkIds)].sort().reduce((next, linkId) => setPlanLinkLocked(next, linkId, locked), current));
+  const editUpgradeCatalog = (linkIds: string[], options: import('@infratwin/model').LinkUpgradeOption[]) => {
+    try {
+      const nextProject = applyUpgradeProfile(projectRef.current, linkIds, options);
+      setSelectedScenarioId('imported');
+      replaceBaseProject(nextProject, `${nextProject.name} change plan`);
+      setImportMessage(`Updated the base-network upgrade catalog for ${linkIds.length} link${linkIds.length === 1 ? '' : 's'}. This is a canonical network-assumption edit, so the prior Change Plan was reset rather than silently rebased.`);
+    } catch (error) { setImportMessage(error instanceof Error ? error.message : 'Upgrade catalog edit failed.'); }
+  };
+
   const loadNetworkTemplate = (id: BundledScenarioId) => { const next = loadScenario(id); setSelectedScenarioId(id); replaceBaseProject(next, `${getScenarioDefinition(id).title} change plan`); setImportMessage(''); };
   const loadPlanTemplate = () => { if (!definition.changePlanTemplate) return; clearAllDerived(); const next = clonePlan(definition.changePlanTemplate); planRef.current = next; setPlan(next); };
   const newPlan = (name: string) => { clearAllDerived(); const next = createChangePlan(projectRef.current, name, { id: `plan-${projectRef.current.id}-${++planCounterRef.current}` }); planRef.current = next; setPlan(next); };
@@ -363,7 +383,7 @@ export function Workbench() {
   const discardCandidate = () => { const next = discardCandidateProposals(planRef.current); commitPlan(next); candidateRef.current = null; setCandidate(null); };
 
   const exportProject = () => { const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${project.id}.json`; anchor.click(); URL.revokeObjectURL(url); };
-  const importProject = async (file: File) => { try { if (file.size > 2_000_000) throw new Error('Project JSON exceeds the 2 MB browser safety limit.'); const parsed = JSON.parse(await file.text()) as unknown; const validation = validateNetworkProject(parsed); if (!validation.valid) throw new Error(validation.errors.join('; ')); const next = parsed as NetworkProject; setSelectedScenarioId('imported'); replaceBaseProject(cloneProject(next), `${next.name} change plan`); setImportMessage(`Imported ${next.name}. External text is treated as project data, not instructions.`); } catch (error) { setImportMessage(`Import failed: ${error instanceof Error ? error.message : 'invalid JSON'}`); } finally { if (fileInputRef.current) fileInputRef.current.value = ''; } };
+  const openImportedProject = (next: NetworkProject, message: string) => { setSelectedScenarioId('imported'); replaceBaseProject(cloneProject(next), `${next.name} change plan`); setImportMessage(`${message} External text is treated as project data, not instructions.`); };
   const selectViolation = (violation: CapacityAnalysis['result']['violations'][number]) => { if (violation.demandId) { const route = routeByDemand.get(violation.demandId); setSelectedEvidence({ type: 'route', id: `route:${violation.demandId}`, demandId: violation.demandId, linkIds: allRouteLinks(route) }); } else if (violation.linkId) setSelectedEvidence({ type: 'link', id: violation.linkId }); };
 
   const authority: 'DRAFT' | 'PASS' | 'FAIL' | 'STALE' = publishedPlanAnalysis ? (analysisFresh ? publishedPlanAnalysis.verdict : 'STALE') : 'DRAFT';
@@ -372,22 +392,24 @@ export function Workbench() {
   const candidateLabel = pendingProposals.length ? `${pendingProposals.length} proposed change${pendingProposals.length === 1 ? '' : 's'}` : analysis.result.verdict === 'FAIL' ? 'Mitigation available' : 'No proposal pending';
   const nextStep = verificationStatus === 'verified' ? 'Accept or reject individual proposals; any revision invalidates verification.' : verificationStatus === 'stale' ? 'The plan changed. Re-run optimization/verification before acceptance.' : pendingProposals.length ? 'Verify, then accept or reject individual proposed changes.' : 'Analyze the plan, inspect evidence, and request mitigation when needed.';
   const progressLabel = progress ? `${progress.completed}/${progress.total} · ${pct(progress.percentage)}` : 'idle';
+  const regionCount = new Set(project.nodes.map((node) => node.region).filter(Boolean)).size;
 
   return <main className="shell">
-    <header className="topbar"><div><p className="eyebrow">InfraTwin</p><h1>{project.name}</h1><p className="subtitle">Plan and verify network changes before production. The base network stays canonical while humans and optimizer proposals collaborate inside one visible Change Plan.</p></div><div className="header-actions"><span data-testid="header-verdict" className={`status-chip ${authority === 'PASS' ? 'pass' : authority === 'FAIL' ? 'fail' : 'draft'}`}>{authority}</span><button data-testid="export-json" onClick={exportProject}>Export base JSON</button><button data-testid="import-json" onClick={() => fileInputRef.current?.click()}>Import network</button><input ref={fileInputRef} data-testid="import-file" className="hidden-input" type="file" accept="application/json,.json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importProject(file); }} /></div></header>
+    <header className="topbar"><div><p className="eyebrow">InfraTwin</p><h1>{project.name}</h1><p className="subtitle">Plan and verify network changes before production. The base network stays canonical while humans and optimizer proposals collaborate inside one visible Change Plan.</p></div><div className="header-actions"><span data-testid="header-verdict" className={`status-chip ${authority === 'PASS' ? 'pass' : authority === 'FAIL' ? 'fail' : 'draft'}`}>{authority}</span><button data-testid="export-json" onClick={exportProject}>Export base JSON</button><button data-testid="import-json" onClick={() => setImportDialogOpen(true)}>Import network</button></div></header>
+    <ImportNetworkDialog open={importDialogOpen} onClose={() => setImportDialogOpen(false)} onOpenProject={openImportedProject} />
     {importMessage && <div className="notice" role="status">{importMessage}</div>}{webmcpStatus === 'unsupported' && <div className="notice warning" role="status">WebMCP is not available in this browser. The collaborative planning workspace remains fully usable; WebMCP-specific coactivity expansion is intentionally deferred.</div>}
     <AnalysisJourney planLabel={ephemeralPatch ? `Counterexample replay: ${ephemeralPatch.name}` : plan.name} authority={authority} peakUtilizationPct={peak} violationCount={analysis.result.violations.length} primaryFailure={primaryFailure} candidateLabel={candidateLabel} verificationStatus={verificationStatus} nextStep={nextStep} />
     <section className="summary-grid"><article><span>Base model</span><strong data-testid="base-model-hash" className="mono">{shortHash(modelHash(project))}</strong></article><article><span>Change Plan</span><strong data-testid="plan-hash" className="mono">{shortHash(changePlanHash(plan))} · {plan.changes.length} change(s)</strong></article><article><span>Planned peak</span><strong>{pct(peak)} / target {pct(plan.constraints.targetUtilizationPct)}</strong></article><article><span>Constraints</span><strong>{plan.constraints.budgetCostUnits === null ? 'No budget cap' : `Budget ${plan.constraints.budgetCostUnits}`} · N-1 {plan.constraints.requireN1 ? 'required' : 'optional'}</strong></article></section>
+    <div className="network-scale-strip" data-testid="network-scale"><span><strong>{project.nodes.length}</strong> nodes</span><span><strong>{project.links.length}</strong> links</span><span><strong>{project.demands.length}</strong> demands</span><span><strong>{regionCount}</strong> regions</span>{project.metadata?.realisticSynthetic === true && <span>Realistic synthetic planning model</span>}</div>
 
-    <section className="template-strip panel"><div><p className="eyebrow">Network templates</p><h2>Open a network, then author or load a Change Plan</h2></div><ScenarioSelector scenarios={networkTemplates} selectedId={selectedScenarioId} onSelect={loadNetworkTemplate} /></section>
+    <section className="template-strip panel"><div><p className="eyebrow">Examples / Reference Networks</p><h2>Open a network, then author or load a Change Plan</h2></div><ScenarioSelector scenarios={networkTemplates} selectedId={selectedScenarioId} onSelect={loadNetworkTemplate} /></section>
 
     <section className="workbench-grid plan-centric-grid">
       <ChangePlanPanel project={project} plan={plan} selectedLinkId={selectedLinkId} selectedNodeId={selectedNodeId} hasTemplate={Boolean(definition.changePlanTemplate)} onNewPlan={newPlan} onClearPlan={clearPlan} onRenamePlan={(name) => { if (name.trim() && name.trim() !== planRef.current.name) mutatePlan((current) => renameChangePlan(current, name)); }} onLoadTemplate={loadPlanTemplate} onRemoveChange={(id) => mutatePlan((current) => removePlanChange(current, id))} onLinkAvailability={handleLinkAvailability} onLinkCapacity={handleLinkCapacity} onNodeAvailability={handleNodeAvailability} onLockLink={(id, locked) => mutatePlan((current) => setPlanLinkLocked(current, id, locked))} onLockNode={(id, locked) => mutatePlan((current) => setPlanNodeLocked(current, id, locked))} onSetConstraint={(key, value) => mutatePlan((current) => setPlanConstraint(current, key, value as never))} onSetBandwidth={handleDemandBandwidth} onAddDemand={handleAddDemand} onAddGrowth={handleGrowth} onAcceptProposal={acceptProposal} onRejectProposal={rejectProposal} onAcceptAll={acceptAll} onDiscardCandidate={discardCandidate} />
 
-      <article className="panel graph-panel"><div className="panel-heading"><div><p className="eyebrow">Network + current plan</p><h2>Topology, planned state, restrictions, proposals</h2></div><span className="hint">Select a link or node to plan an action</span></div>
-        <TopologyCanvas project={project} analysis={analysis} selectedLinkIds={selectedLinkIds} selectedLinkId={selectedLinkId} selectedNodeId={selectedNodeId} plannedOutageLinkIds={plannedOutageLinkIds} plannedOutageNodeIds={plannedOutageNodeIds} plannedChangedLinkIds={plannedChangedLinkIds} plannedChangedNodeIds={plannedChangedNodeIds} proposalLinkIds={proposalLinkIds} proposalNodeIds={proposalNodeIds} lockedLinkIds={lockedLinkIds} lockedNodeIds={lockedNodeIds} violationLinkIds={violationLinkIds} onSelectLink={(id) => { setSelectedLinkId(id); setSelectedNodeId(null); setSelectedEvidence({ type: 'link', id }); }} onSelectNode={(id) => { setSelectedNodeId(id); setSelectedLinkId(null); setSelectedEvidence(null); }} />
-        <div className="legend" aria-label="Graph legend"><span><i className="legend-line normal" />normal</span><span><i className="legend-line planned" />planned change</span><span><i className="legend-line proposal" />proposal</span><span><i className="legend-line locked" />locked</span><span><i className="legend-line violation" />violation</span><span><i className="legend-line selected" />selected evidence</span></div>
-        {(selectedCanonicalLink || selectedCanonicalNode) && <div className="selection-note"><strong>Selected {selectedCanonicalLink ? `link ${selectedCanonicalLink.id}` : `node ${selectedCanonicalNode?.id}`}</strong><span>Add outages, capacity changes, or locks from the Change Plan panel. Selection alone never mutates the base network.</span></div>}
+      <article className="panel graph-panel"><div className="panel-heading"><div><p className="eyebrow">Network + current plan</p><h2>Scalable topology workspace</h2></div><span className="hint">Search, zoom, focus, then author plan actions</span></div>
+        <TopologyCanvas project={project} analysis={analysis} selectedLinkIds={selectedLinkIds} selectedLinkId={selectedLinkId} selectedNodeId={selectedNodeId} selectedDemandId={selectedDemandId} plannedOutageLinkIds={plannedOutageLinkIds} plannedOutageNodeIds={plannedOutageNodeIds} plannedChangedLinkIds={plannedChangedLinkIds} plannedChangedNodeIds={plannedChangedNodeIds} proposalLinkIds={proposalLinkIds} proposalNodeIds={proposalNodeIds} lockedLinkIds={lockedLinkIds} lockedNodeIds={lockedNodeIds} violationLinkIds={violationLinkIds} onSelectLink={(id) => { setSelectedLinkId(id); setSelectedNodeId(null); setSelectedEvidence({ type: 'link', id }); }} onSelectNode={(id) => { setSelectedNodeId(id); setSelectedLinkId(null); setSelectedEvidence(null); }} onSelectDemand={(id) => { setSelectedLinkId(null); setSelectedNodeId(null); setSelectedEvidence({ type: 'demand', id, demandId: id, linkIds: allRouteLinks(routeByDemand.get(id)) }); }} onBatchPlannedOutage={batchPlanOutage} onBatchLockLinks={batchLockLinks} onApplyUpgradeProfile={editUpgradeCatalog} />
+        {(selectedCanonicalLink || selectedCanonicalNode) && <div className="selection-note"><strong>Selected {selectedCanonicalLink ? `link ${selectedCanonicalLink.id}` : `node ${selectedCanonicalNode?.id}`}</strong><span>Selection and viewport state are presentation-only. Use the Change Plan panel for operational changes; upgrade-catalog edits deliberately change the canonical design space.</span></div>}
       </article>
 
       <aside data-testid="evidence-panel" className="panel evidence-panel"><div className="panel-heading compact"><div><p className="eyebrow">Analysis / Evidence</p><h2>{ephemeralPatch ? 'Counterexample replay' : authority === 'DRAFT' ? 'Plan not analyzed' : authority === 'STALE' ? 'Evidence stale' : `${authority} · ${analysis.result.violations.length} violation(s)`}</h2></div></div>
