@@ -25,6 +25,7 @@ jobs:
             package.json
             package-lock.json
             playwright.config.ts
+            playwright.scale.config.ts
             tsconfig.json
           retention-days: 1
       - uses: actions/setup-node@v4
@@ -48,12 +49,14 @@ jobs:
           retention-days: 7
       - run: npm run benchmark:level2
       - run: npm run benchmark:level3
+      - name: Reset scale benchmark output
+        run: rm -rf benchmark-results && mkdir -p benchmark-results
       - run: npm run benchmark:scale
       - name: Upload scale benchmark output
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: phase35c-scale-benchmark
-          path: benchmark-results/scale.json
+          path: benchmark-results/*.json
           if-no-files-found: ignore
           retention-days: 14
