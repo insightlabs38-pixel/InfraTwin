@@ -1,0 +1,43 @@
+name: Apply Phase 3.5B bundle
+
+on:
+  push:
+    branches:
+      - feature/phase-3-5b-scalable-workspace
+    paths:
+      - .github/phase35b-trigger.txt
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct and verify bundle
+        shell: bash
+        run: |
+          cat .github/phase35b_bundle/part00 .github/phase35b_bundle/part01 .github/phase35b_bundle/part02 .github/phase35b_bundle/part03 .github/phase35b_bundle/part04 .github/phase35b_bundle/part05 .github/phase35b_bundle/part06 > /tmp/phase35b.b64
+          echo "f9d445f4cc0433e577a37adccb71a14d11e85a1ba3a40b973b09c607940b1c37  /tmp/phase35b.b64" | sha256sum -c -
+          base64 --decode /tmp/phase35b.b64 > /tmp/phase35b.tar.gz
+          echo "fc873ad002a5c90a58f2d7f445ff80f12283a13512952d24293425a38114fa47  /tmp/phase35b.tar.gz" | sha256sum -c -
+          rm -rf /tmp/phase35b && mkdir -p /tmp/phase35b
+          tar -xzf /tmp/phase35b.tar.gz -C /tmp/phase35b
+          (cd /tmp/phase35b && python apply_phase35b.py)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Commit verified implementation
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m 'feat(phase-3.5b): add scalable engineering workspace'
+          git push origin HEAD:feature/phase-3-5b-scalable-workspace
