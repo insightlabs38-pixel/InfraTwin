@@ -30,3 +30,12 @@ jobs:
           retention-days: 7
       - run: npm run benchmark:level2
       - run: npm run benchmark:level3
+      - run: npm run benchmark:scale
+      - name: Upload scale benchmark output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase35c-scale-benchmark
+          path: benchmark-results/scale.json
+          if-no-files-found: ignore
+          retention-days: 14
