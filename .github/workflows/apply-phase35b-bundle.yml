@@ -67,6 +67,33 @@ jobs:
           rm -rf /tmp/phase35b && mkdir -p /tmp/phase35b
           tar -xzf /tmp/phase35b.tar.gz -C /tmp/phase35b
           python /tmp/phase35b/apply_phase35b.py
+      - name: Synchronize integration goldens
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          level1 = Path('tests/level1.test.ts')
+          text = level1.read_text()
+          old_title = "test('Level 1 bundles the three polished demo scenarios plus blank', () => {"
+          new_title = "test('bundled scenarios preserve the three Level 1 demos plus blank alongside the Phase 3.5B flagship', () => {"
+          old_list = "assert.deepEqual(scenarios.map((item) => item.id), ['maintenance-trap', 'growth-wall', 'resilience-gap', 'blank']);"
+          new_list = "assert.deepEqual(scenarios.map((item) => item.id), ['continental-service-network', 'maintenance-trap', 'growth-wall', 'resilience-gap', 'blank']);"
+          if old_title not in text or old_list not in text:
+              raise SystemExit('Level 1 bundled-scenario golden did not match the expected frozen baseline')
+          text = text.replace(old_title, new_title, 1).replace(old_list, new_list, 1)
+          level1.write_text(text)
+
+          old_hash = 'sha256:b2897b18de725eedfeb9e83f97e92b67f3f8a55f15bc1252fa645646584c32c2'
+          new_hash = 'sha256:661d1e8c85aea919e8379981ad45f0554d9fe613e18aa52808f1797624fa0e65'
+          for filename in ['tests/phase35b-scalable-workspace.test.ts', 'planning/LEVEL3_5B_SCALABLE_WORKSPACE_STATUS.md']:
+              path = Path(filename)
+              source = path.read_text()
+              if source.count(old_hash) != 1:
+                  raise SystemExit(f'{filename} did not contain exactly one stale flagship hash')
+              path.write_text(source.replace(old_hash, new_hash, 1))
+          PY
       - uses: actions/setup-node@v4
         with:
           node-version: 22
