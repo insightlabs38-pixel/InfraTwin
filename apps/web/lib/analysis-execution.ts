@@ -11,6 +11,50 @@ export const ANALYSIS_WORKER_THRESHOLD_UNITS = 4_000_000;
 
 export type CapacityExecutionMode = 'main-thread' | 'worker';
 
+export const N1_ENGINE_HARD_CAP = 500;
+export const LARGE_SCALE_N1_WORK_UNITS = 700_000;
+export const LARGE_SCALE_N1_RECOMMENDED_CAP = 50;
+
+export interface N1ExecutionPolicy {
+  eligibleScenarios: number;
+  maxScenarios: number;
+  timeLimitMs: number;
+  guidance: 'AVAILABLE' | 'LONG-RUNNING' | 'BOUNDED';
+  reason: string;
+}
+
+/**
+ * Browser N-1 policy derived from the Phase 3.5C Tier-C browser measurement.
+ * The evidence engine retains its exact 500-scenario hard cap; this product policy lowers the
+ * recommended browser batch only when routing complexity reaches the measured large-scale class.
+ */
+export function n1ExecutionPolicy(project: NetworkProject): N1ExecutionPolicy {
+  const estimate = estimateRoutingWorkload(project);
+  const eligibleScenarios = project.links.filter((link) => link.available !== false).length;
+  const largeMeasuredClass = estimate.estimatedWorkUnits >= LARGE_SCALE_N1_WORK_UNITS;
+  const maxScenarios = Math.min(
+    N1_ENGINE_HARD_CAP,
+    eligibleScenarios,
+    largeMeasuredClass ? LARGE_SCALE_N1_RECOMMENDED_CAP : N1_ENGINE_HARD_CAP,
+  );
+  const guidance: N1ExecutionPolicy['guidance'] = eligibleScenarios > maxScenarios
+    ? 'BOUNDED'
+    : eligibleScenarios > 100
+      ? 'LONG-RUNNING'
+      : 'AVAILABLE';
+  return {
+    eligibleScenarios,
+    maxScenarios: Math.max(1, maxScenarios),
+    timeLimitMs: 30_000,
+    guidance,
+    reason: largeMeasuredClass && eligibleScenarios > LARGE_SCALE_N1_RECOMMENDED_CAP
+      ? `Measured large-scale routing workload; run the first ${LARGE_SCALE_N1_RECOMMENDED_CAP} exact link failures per browser batch.`
+      : eligibleScenarios > N1_ENGINE_HARD_CAP
+        ? `Exact link-failure enumeration is bounded by the ${N1_ENGINE_HARD_CAP}-scenario engine cap.`
+        : 'Exact link-failure enumeration is available within the current engine cap.',
+  };
+}
+
 export interface AnalysisExecutionProfile {
   mode: CapacityExecutionMode;
   estimatedWorkUnits: number;

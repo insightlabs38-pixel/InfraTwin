@@ -49,7 +49,7 @@ import { estimateCapacityMILP, estimateTrafficAllocationLP } from '@infratwin/op
 import type { CapacityOptimizationResult, CapacityPlanRequirements, CandidateVerification, TrafficAllocationResult } from '@infratwin/optimizer';
 import { optimizeCapacityInBrowser, optimizeRoutingInBrowser, probeBrowserOptimizer, verifyCandidateInBrowser } from '../lib/optimizer-client';
 import { analyzeChangePlanInBrowserWorker } from '../lib/analysis-client';
-import { analysisExecutionProfile, createAnalysisAuthorityToken, isAnalysisAuthorityTokenCurrent, type CapacityExecutionMode } from '../lib/analysis-execution';
+import { analysisExecutionProfile, createAnalysisAuthorityToken, isAnalysisAuthorityTokenCurrent, n1ExecutionPolicy, N1_ENGINE_HARD_CAP, type CapacityExecutionMode } from '../lib/analysis-execution';
 import { AnalysisJourney } from './analysis-journey';
 import { ChangePlanPanel } from './change-plan-panel';
 import { ScenarioSelector } from './scenario-selector';
@@ -377,7 +377,7 @@ export function Workbench() {
     if (planSnapshot.constraints.requireN1 && base.links.some((link) => link.available !== false)) {
       const controller = new AbortController(); directRunControllerRef.current = controller;
       try {
-        const next = await executeContingencies({ signal: controller.signal, maxScenarios: 500, timeLimitMs: 30_000 }, { project: base, patch: result.patch });
+        const next = await executeContingencies({ signal: controller.signal, ...(() => { const policy = n1ExecutionPolicy(base); return { maxScenarios: policy.maxScenarios, timeLimitMs: policy.timeLimitMs }; })() }, { project: base, patch: result.patch });
         if (next.status === 'cancelled' || !isPlanEvidenceFresh(result.stamp, projectRef.current, planRef.current)) return;
         contingencyRef.current = next; setContingencies(next); setContingencyStamp(result.stamp); n1Fail = Number(next.result.metrics.failingScenarios ?? 0) > 0; n1Incomplete = next.status !== 'complete';
       } catch (error) { if (!(error instanceof Error && error.name === 'AbortError')) { setResilienceStatus('error'); setResilienceMessage(error instanceof Error ? error.message : 'N-1 analysis failed.'); } return; }
@@ -389,8 +389,8 @@ export function Workbench() {
     setStatusOnly(fail ? 'failing' : 'analyzed', `Plan analyzed: ${fail ? 'FAIL' : 'PASS'}${n1Summary}.`);
   };
   const runPlanN1 = async () => {
-    ephemeralRef.current = null; setEphemeralPatch(null); const stamp = changePlanEvidenceStamp(projectRef.current, planRef.current); const patch = compileChangePlanToScenarioPatch(projectRef.current, planRef.current); const controller = new AbortController(); directRunControllerRef.current = controller;
-    try { const next = await executeContingencies({ signal: controller.signal, maxScenarios: 500, timeLimitMs: 30_000 }, { project: cloneProject(projectRef.current), patch }); if (next.status !== 'cancelled' && isPlanEvidenceFresh(stamp, projectRef.current, planRef.current)) { contingencyRef.current = next; setContingencies(next); setContingencyStamp(stamp); } }
+    ephemeralRef.current = null; setEphemeralPatch(null); const stamp = changePlanEvidenceStamp(projectRef.current, planRef.current); const patch = compileChangePlanToScenarioPatch(projectRef.current, planRef.current); const controller = new AbortController(); directRunControllerRef.current = controller; const policy = n1ExecutionPolicy(projectRef.current);
+    try { const next = await executeContingencies({ signal: controller.signal, maxScenarios: policy.maxScenarios, timeLimitMs: policy.timeLimitMs }, { project: cloneProject(projectRef.current), patch }); if (next.status !== 'cancelled' && isPlanEvidenceFresh(stamp, projectRef.current, planRef.current)) { contingencyRef.current = next; setContingencies(next); setContingencyStamp(stamp); } }
     catch (error) { setResilienceStatus(error instanceof Error && error.name === 'AbortError' ? 'cancelled' : 'error'); setResilienceMessage(error instanceof Error ? error.message : 'N-1 failed.'); }
     finally { if (directRunControllerRef.current === controller) directRunControllerRef.current = null; }
   };
@@ -408,7 +408,7 @@ export function Workbench() {
     const expectedPlanHash = changePlanHash(planRef.current); const expectedModelHash = modelHash(projectRef.current); let currentN1 = contingencies;
     try {
       if (planRef.current.constraints.requireN1 && !n1Fresh) {
-        const stamp = changePlanEvidenceStamp(projectRef.current, planRef.current); const planPatch = compileChangePlanToScenarioPatch(projectRef.current, planRef.current); currentN1 = await executeContingencies({ signal: controller.signal, maxScenarios: 500, timeLimitMs: 30_000 }, { project: cloneProject(projectRef.current), patch: planPatch });
+        const stamp = changePlanEvidenceStamp(projectRef.current, planRef.current); const planPatch = compileChangePlanToScenarioPatch(projectRef.current, planRef.current); const policy = n1ExecutionPolicy(projectRef.current); currentN1 = await executeContingencies({ signal: controller.signal, maxScenarios: policy.maxScenarios, timeLimitMs: policy.timeLimitMs }, { project: cloneProject(projectRef.current), patch: planPatch });
         if (currentN1.status !== 'complete') throw new Error('N-1 constraint was not fully evaluated; optimizer candidate was not published.');
         if (!isPlanEvidenceFresh(stamp, projectRef.current, planRef.current)) throw new Error('Plan changed during N-1 evaluation.');
         setContingencies(currentN1); setContingencyStamp(stamp);
@@ -444,10 +444,11 @@ export function Workbench() {
   const nextStep = verificationStatus === 'verified' ? 'Accept or reject individual proposals; any revision invalidates verification.' : verificationStatus === 'stale' ? 'The plan changed. Re-run optimization/verification before acceptance.' : pendingProposals.length ? 'Verify, then accept or reject individual proposed changes.' : 'Analyze the plan, inspect evidence, and request mitigation when needed.';
   const progressLabel = progress ? `${progress.completed}/${progress.total} · ${pct(progress.percentage)}` : 'idle';
   const regionCount = new Set(project.nodes.map((node) => node.region).filter(Boolean)).size;
-  const eligibleN1 = project.links.filter((link) => link.available !== false).length;
+  const n1Policy = useMemo(() => n1ExecutionPolicy(project), [project]);
+  const eligibleN1 = n1Policy.eligibleScenarios;
   const routingLpEstimate = useMemo(() => estimateTrafficAllocationLP(project), [project]);
   const capacityMilpEstimate = useMemo(() => estimateCapacityMILP(project, { includeBaseline: true, targetUtilizationPct: plan.constraints.targetUtilizationPct, budgetCostUnits: plan.constraints.budgetCostUnits ?? undefined, scenarioPatches: plan.changes.length ? [compiledPlanPatch] : [] }), [project, plan.constraints.targetUtilizationPct, plan.constraints.budgetCostUnits, plan.changes.length, compiledPlanPatch]);
-  const n1Guidance = eligibleN1 > 500 ? 'BOUNDED' : eligibleN1 > 100 ? 'LONG-RUNNING' : 'AVAILABLE';
+  const n1Guidance = n1Policy.guidance;
 
   return <main className="shell">
     <header className="topbar"><div><p className="eyebrow">InfraTwin</p><h1>{project.name}</h1><p className="subtitle">Plan and verify network changes before production. The base network stays canonical while humans and optimizer proposals collaborate inside one visible Change Plan.</p></div><div className="header-actions"><span data-testid="header-verdict" className={`status-chip ${authority === 'PASS' ? 'pass' : authority === 'FAIL' ? 'fail' : 'draft'}`}>{authority}</span><button data-testid="export-json" onClick={exportProject}>Export base JSON</button><button data-testid="import-json" onClick={() => setImportDialogOpen(true)}>Import network</button></div></header>
@@ -459,7 +460,7 @@ export function Workbench() {
     <details className="panel compute-profile" data-testid="compute-profile" open={selectedScenarioId === 'national-backbone-scale-test'}><summary><span>Compute Profile / Scale</span><strong>{executionProfile.mode === 'worker' ? 'Worker preferred' : 'Main-thread fast path'} · {lastAnalysisRuntimeMs === null ? 'not run' : `${lastAnalysisRuntimeMs} ms`}</strong></summary><div className="compute-profile-grid">
       <div><span>Network</span><strong>{project.nodes.length} nodes · {project.links.length} links · {project.demands.length} demands</strong><small>{executionProfile.shortestPathRuns} shortest-path runs · {executionProfile.estimatedWorkUnits.toLocaleString()} complexity units</small></div>
       <div><span>Baseline / ChangePlan</span><strong>{analysisStatus === 'running' ? 'RUNNING' : analysisStatus === 'error' ? 'ERROR' : executionProfile.mode === 'worker' ? 'WORKER' : 'AVAILABLE'}</strong><small>Last execution: {lastAnalysisExecution ?? 'not run'}{lastAnalysisRuntimeMs === null ? '' : ` · ${lastAnalysisRuntimeMs} ms live`}</small></div>
-      <div><span>Resilience</span><strong>{n1Guidance}</strong><small>{eligibleN1} eligible link failures · exact run cap 500 · {contingencies ? `${contingencies.completedScenarios}/${contingencies.totalEligibleScenarios} ${contingencies.status.toUpperCase()}` : 'not run'}</small></div>
+      <div><span>Resilience</span><strong>{n1Guidance}</strong><small>{eligibleN1} eligible link failures · recommended run cap {n1Policy.maxScenarios} · engine hard cap {N1_ENGINE_HARD_CAP} · {contingencies ? `${contingencies.completedScenarios}/${contingencies.totalEligibleScenarios} ${contingencies.status.toUpperCase()}` : 'not run'}</small></div>
       <div><span>Routing LP</span><strong>{routingLpEstimate.recommended ? 'AVAILABLE' : 'NOT RECOMMENDED'}</strong><small>{routingLpEstimate.flowVariables.toLocaleString()} flow variables · {routingLpEstimate.constraints.toLocaleString()} constraints</small></div>
       <div><span>Capacity MILP</span><strong>{capacityMilpEstimate.recommended ? 'AVAILABLE' : 'NOT RECOMMENDED'}</strong><small>{capacityMilpEstimate.decisionVariables.toLocaleString()} decisions × {capacityMilpEstimate.scenarioCount} scenario(s)</small></div>
     </div></details>

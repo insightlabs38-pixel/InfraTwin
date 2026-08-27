@@ -67,11 +67,12 @@ test('Phase 3.5C reproducible Chromium scale benchmark', async ({ page, browserN
   });
   const n1StartedAt = performance.now();
   await page.getByTestId('run-resilience').click();
-  await expect(page.getByTestId('resilience-status')).toContainText(/partial/i, { timeout: 45_000 });
-  measurements.push({ fixture: 'National Backbone Scale Test', counts: nationalCounts, routingMode: 'single-shortest-path', operation: 'n1-500-browser-worker-pool', runtimeMs: performance.now() - n1StartedAt, execution: 'worker-pool', success: true, scenarioCount: 500 });
+  await expect(page.getByTestId('resilience-status')).toContainText(/^partial ·/i, { timeout: 45_000 });
+  measurements.push({ fixture: 'National Backbone Scale Test', counts: nationalCounts, routingMode: 'single-shortest-path', operation: 'n1-recommended-bounded-browser-worker-pool', runtimeMs: performance.now() - n1StartedAt, execution: 'worker-pool', success: true, scenarioCount: 50 });
 
   const workerProject = generateScaleProject({ id: 'C', name: 'chromium-worker-probe', ...nationalCounts, seed: 3599, routingMode: 'ecmp', workload: 'unique-sources', sourceConcentration: 500, upgradeOptionDensity: 0.25 });
   await page.getByTestId('import-json').click();
+  await page.getByRole('button', { name: 'Canonical JSON' }).click();
   await page.getByTestId('json-import-file').setInputFiles({ name: 'chromium-worker-probe.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(workerProject)) });
   await page.getByTestId('open-imported-network').click();
   await expect(page.getByTestId('compute-profile')).toContainText('Worker preferred');

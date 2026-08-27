@@ -17,6 +17,7 @@ async function importWorkerScale(page: Page) {
     seed: 3587, routingMode: 'ecmp', workload: 'unique-sources', sourceConcentration: 500, upgradeOptionDensity: 0.25,
   });
   await page.getByTestId('import-json').click();
+  await page.getByRole('button', { name: 'Canonical JSON' }).click();
   await page.getByTestId('json-import-file').setInputFiles({
     name: 'phase35c-worker-scale.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)),
   });
@@ -77,9 +78,9 @@ test('Phase 3.5C 4: 500-node scale proof reports bounded N-1 as partial coverage
   await openScaleProof(page);
   await page.getByTestId('run-resilience').click();
   await expect(page.getByTestId('resilience-status')).toContainText(/running/i, { timeout: 5_000 });
-  await expect(page.getByTestId('resilience-status')).toContainText(/partial/i, { timeout: 45_000 });
-  await expect(page.getByTestId('resilience-evidence')).toContainText('500/1200');
-  await expect(page.getByTestId('compute-profile')).toContainText('500/1200 PARTIAL');
+  await expect(page.getByTestId('resilience-status')).toContainText(/^partial ·/i, { timeout: 45_000 });
+  await expect(page.getByTestId('resilience-evidence')).toContainText('50/1200');
+  await expect(page.getByTestId('compute-profile')).toContainText('50/1200 PARTIAL');
 });
 
 test('Phase 3.5C 5: routing-LP scale guard is explicit while deterministic analysis remains available', async ({ page }) => {
@@ -101,5 +102,5 @@ test('Phase 3.5C 6: Compute Profile reports live execution mode/runtime rather t
   const profile = await page.getByTestId('compute-profile').innerText();
   expect(profile).toMatch(/Last execution: (main-thread|worker) · [0-9.]+ ms live/);
   expect(profile).toContain('1200 eligible link failures');
-  expect(profile).toMatch(/Routing LP\s+NOT RECOMMENDED/);
+  expect(profile).toMatch(/ROUTING LP\s+NOT RECOMMENDED/i);
 });

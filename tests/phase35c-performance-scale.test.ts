@@ -6,7 +6,7 @@ import { cloneProject, createChangePlan, modelHash, type NetworkProject } from '
 import { estimateTrafficAllocationLP } from '../packages/optimizer/src/index.ts';
 import { generateScaleProject } from '../packages/scenarios/src/scale-generator.ts';
 import { executeChangePlanAnalysisWorkerKernel } from '../apps/web/lib/analysis-worker-core.ts';
-import { analysisExecutionProfile, createAnalysisAuthorityToken, isAnalysisAuthorityTokenCurrent } from '../apps/web/lib/analysis-execution.ts';
+import { analysisExecutionProfile, createAnalysisAuthorityToken, isAnalysisAuthorityTokenCurrent, n1ExecutionPolicy } from '../apps/web/lib/analysis-execution.ts';
 
 function fixture(mode: 'single-shortest-path' | 'ecmp', seed = 351): NetworkProject {
   return generateScaleProject({ id: 'A', name: 'property', nodes: 18, links: 42, demands: 30, regions: 3, seed, routingMode: mode, workload: 'concentrated-sources', sourceConcentration: 4, serviceClassCount: 3, upgradeOptionDensity: 0.25 });
@@ -100,6 +100,10 @@ test('Phase 3.5C G: scale/execution estimator is deterministic and sends high-un
   assert.deepEqual(analysisExecutionProfile(small), analysisExecutionProfile(structuredClone(small)));
   const large = generateScaleProject({ id: 'C', name: 'worker-threshold', nodes: 500, links: 1200, demands: 400, regions: 12, seed: 3553, routingMode: 'ecmp', workload: 'unique-sources', serviceClassCount: 3, upgradeOptionDensity: 0.1 });
   assert.equal(analysisExecutionProfile(large).mode, 'worker');
+  const largeN1 = n1ExecutionPolicy(large);
+  assert.equal(largeN1.guidance, 'BOUNDED');
+  assert.equal(largeN1.maxScenarios, 50);
+  assert.equal(largeN1.eligibleScenarios, 1200);
 });
 
 test('Phase 3.5C H: routing-LP size estimator exactly matches demand × active directed-arc construction', () => {
