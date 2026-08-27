@@ -16,18 +16,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Apply staged patch when present
+      - name: Apply staged patch when all chunks are present
         shell: bash
         run: |
           set -euo pipefail
-          PATCH_B64="planning/.phase35c-patch.gz.b64"
-          if [[ ! -f "$PATCH_B64" ]]; then
-            echo "No staged patch present."
+          shopt -s nullglob
+          PARTS=(planning/.phase35c-patch.part*)
+          if [[ ${#PARTS[@]} -ne 6 ]]; then
+            echo "Waiting for all 6 staged patch chunks; found ${#PARTS[@]}."
             exit 0
           fi
-          base64 -d "$PATCH_B64" | gzip -d > /tmp/phase35c.patch
+          cat "${PARTS[@]}" | base64 -d | gzip -d > /tmp/phase35c.patch
           patch -p1 < /tmp/phase35c.patch
-          rm -f "$PATCH_B64"
+          rm -f "${PARTS[@]}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
