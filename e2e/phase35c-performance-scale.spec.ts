@@ -78,7 +78,7 @@ test('Phase 3.5C 4: 500-node scale proof reports bounded N-1 as partial coverage
   await openScaleProof(page);
   await page.getByTestId('run-resilience').click();
   await expect(page.getByTestId('resilience-status')).toContainText(/running/i, { timeout: 5_000 });
-  await expect(page.getByTestId('resilience-status')).toContainText(/^partial ·/i, { timeout: 45_000 });
+  await expect(page.getByTestId('resilience-status')).toContainText(/partial · 50\/50 · 100%/i, { timeout: 45_000 });
   await expect(page.getByTestId('resilience-evidence')).toContainText('50/1200');
   await expect(page.getByTestId('compute-profile')).toContainText('50/1200 PARTIAL');
 });
