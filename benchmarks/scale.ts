@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import process from 'node:process';
 import { performance } from 'node:perf_hooks';
-import { routeProject } from '../packages/graph-engine/src/index.ts';
+import { routeProject, routeProjectProfiled } from '../packages/graph-engine/src/index.ts';
 import { modelHash, validateNetworkProject } from '../packages/model/src/index.ts';
 import { generateScaleProject, SCALE_TIERS, type ScaleTier, type ScaleWorkloadVariant } from './scale-fixtures.ts';
 
@@ -22,6 +22,7 @@ interface Measurement {
   heapDeltaBytes?: number;
   resultHash?: string;
   error?: string;
+  profile?: { validationMs: number; graphBuildMs: number; pathComputationMs: number; flowAccumulationMs: number; capacityComputationMs: number; totalMs: number; shortestPathComputations: number };
 }
 
 function elapsed<T>(fn: () => T): { value: T; runtimeMs: number; heapDeltaBytes: number } {
@@ -62,8 +63,15 @@ function measureCase(tier: ScaleTier, routingMode: 'single-shortest-path' | 'ecm
     const hashing = elapsed(() => modelHash(project));
     output.push({ fixture, tier: tier.id, counts, routingMode, workload, operation: 'semantic-hash', runtimeMs: hashing.runtimeMs, success: true, execution: 'main-thread', heapDeltaBytes: hashing.heapDeltaBytes, resultHash: hashing.value });
 
-    const routing = elapsed(() => routeProject(project));
-    output.push({ fixture, tier: tier.id, counts, routingMode, workload, operation: 'route-project', runtimeMs: routing.runtimeMs, success: true, execution: 'main-thread', heapDeltaBytes: routing.heapDeltaBytes, resultHash: stableRouteHash(routing.value) });
+    const routing = elapsed(() => routeProjectProfiled(project));
+    output.push({
+      fixture, tier: tier.id, counts, routingMode, workload, operation: 'route-project', runtimeMs: routing.runtimeMs, success: true, execution: 'main-thread', heapDeltaBytes: routing.heapDeltaBytes, resultHash: stableRouteHash(routing.value.result),
+      profile: {
+        validationMs: routing.value.profile.validationMs, graphBuildMs: routing.value.profile.graphBuildMs, pathComputationMs: routing.value.profile.pathComputationMs,
+        flowAccumulationMs: routing.value.profile.flowAccumulationMs, capacityComputationMs: routing.value.profile.capacityComputationMs, totalMs: routing.value.profile.totalMs,
+        shortestPathComputations: routing.value.profile.sourceComputations + routing.value.profile.reverseComputations,
+      },
+    });
 
     if (workload === 'failure-recompute') {
       const failedProject = { ...project, links: project.links.map((link, index) => index === Math.floor(project.links.length / 3) ? { ...link, available: false } : link) };

@@ -13,6 +13,7 @@ interface BrowserMeasurement {
   success: boolean;
   longestObservedMainThreadTaskMs?: number;
   optimizationSize?: number;
+  scenarioCount?: number;
 }
 
 test('Phase 3.5C reproducible Chromium scale benchmark', async ({ page, browserName, browser }) => {
@@ -64,6 +65,10 @@ test('Phase 3.5C reproducible Chromium scale benchmark', async ({ page, browserN
     await page.getByTestId('analyze-plan').click();
     await expect(page.getByTestId('capacity-analysis-status')).toContainText(/COMPLETE/i);
   });
+  const n1StartedAt = performance.now();
+  await page.getByTestId('run-resilience').click();
+  await expect(page.getByTestId('resilience-status')).toContainText(/partial/i, { timeout: 45_000 });
+  measurements.push({ fixture: 'National Backbone Scale Test', counts: nationalCounts, routingMode: 'single-shortest-path', operation: 'n1-500-browser-worker-pool', runtimeMs: performance.now() - n1StartedAt, execution: 'worker-pool', success: true, scenarioCount: 500 });
 
   const workerProject = generateScaleProject({ id: 'C', name: 'chromium-worker-probe', ...nationalCounts, seed: 3599, routingMode: 'ecmp', workload: 'unique-sources', sourceConcentration: 500, upgradeOptionDensity: 0.25 });
   await page.getByTestId('import-json').click();
@@ -77,7 +82,16 @@ test('Phase 3.5C reproducible Chromium scale benchmark', async ({ page, browserN
   await page.getByTestId('zoom-in').click();
   measurements.push({ fixture: 'Tier C unique-source Worker probe', counts: nationalCounts, routingMode: 'ecmp', operation: 'interaction-during-analysis', runtimeMs: performance.now() - interactionStart, execution: 'worker', success: true });
   await expect(page.getByTestId('capacity-analysis-status')).toContainText(/COMPLETE.*worker/i, { timeout: 30_000 });
-  measurements.push({ fixture: 'Tier C unique-source Worker probe', counts: nationalCounts, routingMode: 'ecmp', operation: 'worker-changeplan-analysis', runtimeMs: performance.now() - workerStart, execution: 'worker', success: true });
+  const workerWallMs = performance.now() - workerStart;
+  measurements.push({ fixture: 'Tier C unique-source Worker probe', counts: nationalCounts, routingMode: 'ecmp', operation: 'worker-changeplan-analysis', runtimeMs: workerWallMs, execution: 'worker', success: true });
+  const profileText = await page.getByTestId('compute-profile').innerText();
+  const kernelMatch = profileText.match(/Last execution: worker · ([0-9.]+) ms live/);
+  if (kernelMatch) {
+    const kernelMs = Number(kernelMatch[1]);
+    measurements.push({ fixture: 'Tier C unique-source Worker probe', counts: nationalCounts, routingMode: 'ecmp', operation: 'worker-start-transfer-result-overhead', runtimeMs: Math.max(0, workerWallMs - kernelMs), execution: 'worker', success: true });
+  }
+  const cloneMs = await page.evaluate((project) => { const start = performance.now(); structuredClone(project); return performance.now() - start; }, workerProject);
+  measurements.push({ fixture: 'Tier C unique-source Worker probe', counts: nationalCounts, routingMode: 'ecmp', operation: 'structured-clone-project', runtimeMs: cloneMs, execution: 'main-thread', success: true });
 
   const longest = await page.evaluate(() => Math.max(0, ...(((window as typeof window & { __phase35cLongTasks?: number[] }).__phase35cLongTasks) ?? [])));
   for (const row of measurements) row.longestObservedMainThreadTaskMs = longest;

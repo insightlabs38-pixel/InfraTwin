@@ -454,15 +454,36 @@ export function ecmpRoute(project: NetworkProject, demand: DemandModel): DemandR
   return ecmpRouteFromDistances(graph, demand, sourceDistancesFor(graph, demand.source, session), reverseDistancesFor(graph, demand.target, session));
 }
 
-export function routeProject(project: NetworkProject, session: RoutingSession = createRoutingSession()): RoutingResult {
-  assertValidNetworkProject(project);
+export interface RoutingExecutionProfile {
+  validationMs: number;
+  graphBuildMs: number;
+  pathComputationMs: number;
+  flowAccumulationMs: number;
+  capacityComputationMs: number;
+  totalMs: number;
+  graphBuilds: number;
+  graphReuses: number;
+  sourceComputations: number;
+  sourceReuses: number;
+  reverseComputations: number;
+  reverseReuses: number;
+}
+
+function profilingNow(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
+function routeProjectCore(project: NetworkProject, session: RoutingSession, timings?: Partial<RoutingExecutionProfile>): RoutingResult {
+  const graphStartedAt = profilingNow();
   const graph = graphFor(project, session);
+  if (timings) timings.graphBuildMs = profilingNow() - graphStartedAt;
   if (project.routingProfile.mode === 'ecmp') {
     for (const edges of graph.adjacency.values()) {
       if (edges.some((edge) => edge.weight <= 0)) throw new Error('ECMP routing requires strictly positive link weights to keep the shortest-path DAG acyclic.');
     }
   }
 
+  const pathsStartedAt = profilingNow();
   // Work is organized by source. The first demand from a source computes the source structure; all others reuse it.
   const routes = project.demands.map((demand) => {
     if (!graph.adjacency.has(demand.source) || !graph.adjacency.has(demand.target)) return unreachableRoute(demand.id);
@@ -471,20 +492,25 @@ export function routeProject(project: NetworkProject, session: RoutingSession = 
     }
     return singleRouteFromTree(demand, singleTreeFor(graph, demand.source, session));
   });
+  if (timings) timings.pathComputationMs = profilingNow() - pathsStartedAt;
 
+  const flowStartedAt = profilingNow();
   const linkLoadsGbps = Object.fromEntries(project.links.map((link) => [link.id, 0])) as Record<string, number>;
   routes.forEach((route, index) => {
     if (!route.reachable) return;
     const demand = project.demands[index];
     for (const [linkId, fraction] of Object.entries(route.linkFractions)) linkLoadsGbps[linkId] = (linkLoadsGbps[linkId] ?? 0) + demand.bandwidthGbps * fraction;
   });
+  if (timings) timings.flowAccumulationMs = profilingNow() - flowStartedAt;
+
+  const capacityStartedAt = profilingNow();
   const linkById = new Map<string, LinkModel>(project.links.map((link) => [link.id, link]));
   const linkUtilizationPct: Record<string, number> = {};
   for (const [linkId, load] of Object.entries(linkLoadsGbps)) {
     const link = linkById.get(linkId);
     linkUtilizationPct[linkId] = link ? (load / link.capacityGbps) * 100 : 0;
   }
-  return {
+  const result = {
     mode: project.routingProfile.mode,
     routes,
     linkLoadsGbps,
@@ -492,6 +518,39 @@ export function routeProject(project: NetworkProject, session: RoutingSession = 
     peakUtilizationPct: Math.max(0, ...Object.values(linkUtilizationPct)),
     unroutedDemandIds: routes.filter((route) => !route.reachable).map((route) => route.demandId),
   };
+  if (timings) timings.capacityComputationMs = profilingNow() - capacityStartedAt;
+  return result;
+}
+
+export function routeProject(project: NetworkProject, session: RoutingSession = createRoutingSession()): RoutingResult {
+  assertValidNetworkProject(project);
+  return routeProjectCore(project, session);
+}
+
+/** Measured routing stages for Phase 3.5C benchmarking. Semantics are identical to routeProject. */
+export function routeProjectProfiled(project: NetworkProject, session: RoutingSession = createRoutingSession()): { result: RoutingResult; profile: RoutingExecutionProfile } {
+  const startedAt = profilingNow();
+  const validationStartedAt = profilingNow();
+  assertValidNetworkProject(project);
+  const validationMs = profilingNow() - validationStartedAt;
+  const before = { ...session.stats };
+  const partial: Partial<RoutingExecutionProfile> = { validationMs };
+  const result = routeProjectCore(project, session, partial);
+  const profile: RoutingExecutionProfile = {
+    validationMs,
+    graphBuildMs: partial.graphBuildMs ?? 0,
+    pathComputationMs: partial.pathComputationMs ?? 0,
+    flowAccumulationMs: partial.flowAccumulationMs ?? 0,
+    capacityComputationMs: partial.capacityComputationMs ?? 0,
+    totalMs: profilingNow() - startedAt,
+    graphBuilds: session.stats.graphBuilds - before.graphBuilds,
+    graphReuses: session.stats.graphReuses - before.graphReuses,
+    sourceComputations: session.stats.sourceComputations - before.sourceComputations,
+    sourceReuses: session.stats.sourceReuses - before.sourceReuses,
+    reverseComputations: session.stats.reverseComputations - before.reverseComputations,
+    reverseReuses: session.stats.reverseReuses - before.reverseReuses,
+  };
+  return { result, profile };
 }
 
 // Independent pre-3.5C reference implementation retained for semantic differential tests.

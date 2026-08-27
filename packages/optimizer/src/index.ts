@@ -17,6 +17,9 @@ export interface SolverDiagnostics {
   timedOut: boolean;
   timeLimitMs: number;
   runtimeMs: number;
+  modelConstructionMs: number;
+  wasmInitializationMs: number;
+  solveRuntimeMs: number;
   modelHash: string;
   scenarioHashes: string[];
   problemHash: string;
@@ -135,7 +138,7 @@ function diagnosticsFrom(
   project: NetworkProject,
   patches: Array<ScenarioPatch | null>,
   problem: string,
-  startedAt: number,
+  timings: { startedAt: number; modelConstructionMs: number; wasmInitializationMs: number; solveRuntimeMs: number },
   timeLimitMs: number,
   message = '',
 ): SolverDiagnostics {
@@ -149,7 +152,10 @@ function diagnosticsFrom(
     objectiveValue: numeric(raw.ObjectiveValue),
     mipGap: numeric(raw.MipGap),
     timeLimitMs,
-    runtimeMs: round(performanceNow() - startedAt, 3),
+    runtimeMs: round(performanceNow() - timings.startedAt, 3),
+    modelConstructionMs: round(timings.modelConstructionMs, 3),
+    wasmInitializationMs: round(timings.wasmInitializationMs, 3),
+    solveRuntimeMs: round(timings.solveRuntimeMs, 3),
     modelHash: modelHash(project),
     scenarioHashes: patches.map((patch) => scenarioHash(patch)),
     problemHash: fnv1a(problem),
@@ -325,6 +331,9 @@ export async function optimizeRouting(project: NetworkProject, options: SolverRu
         timedOut: false,
         timeLimitMs,
         runtimeMs: 0,
+        modelConstructionMs: 0,
+        wasmInitializationMs: 0,
+        solveRuntimeMs: 0,
         modelHash: modelHash(project),
         scenarioHashes: [scenarioHash(null)],
         problemHash: fnv1a(`routing-lp-guard:${estimate.flowVariables}:${estimate.constraints}`),
@@ -335,11 +344,17 @@ export async function optimizeRouting(project: NetworkProject, options: SolverRu
       verification: null,
     };
   }
-  const { problem, variables } = buildTrafficAllocationLP(project);
   const startedAt = performanceNow();
+  const modelStartedAt = performanceNow();
+  const { problem, variables } = buildTrafficAllocationLP(project);
+  const modelConstructionMs = performanceNow() - modelStartedAt;
+  const wasmStartedAt = performanceNow();
   const highs = await loadHighs(options);
+  const wasmInitializationMs = performanceNow() - wasmStartedAt;
+  const solveStartedAt = performanceNow();
   const raw = highs.solve(problem, { output_flag: false, time_limit: timeLimitMs / 1000 });
-  let diagnostics = diagnosticsFrom(raw, project, [null], problem, startedAt, timeLimitMs);
+  const solveRuntimeMs = performanceNow() - solveStartedAt;
+  let diagnostics = diagnosticsFrom(raw, project, [null], problem, { startedAt, modelConstructionMs, wasmInitializationMs, solveRuntimeMs }, timeLimitMs);
   const allocations = variables.map((variable) => ({ ...variable, flowGbps: round(numeric(raw.Columns?.[variable.name]?.Primal) ?? 0) })).filter((row) => row.flowGbps > 1e-8);
   const t = numeric(raw.Columns?.t?.Primal);
   const maxUtilizationPct = t === null ? null : round(t * 100);
@@ -456,7 +471,7 @@ export function buildCapacityUpgradeMILP(project: NetworkProject, requirementsIn
 }
 
 function syntheticDiagnostics(project: NetworkProject, patches: Array<ScenarioPatch | null>, problem: string, timeLimitMs: number, status: string, proof: OptimizationProof, message: string): SolverDiagnostics {
-  return { solver: HIGHS_SOLVER_NAME, solverVersion: HIGHS_PACKAGE_VERSION, status, proof, objectiveValue: null, mipGap: null, timedOut: false, timeLimitMs, runtimeMs: 0, modelHash: modelHash(project), scenarioHashes: patches.map((patch) => scenarioHash(patch)), problemHash: fnv1a(problem), message };
+  return { solver: HIGHS_SOLVER_NAME, solverVersion: HIGHS_PACKAGE_VERSION, status, proof, objectiveValue: null, mipGap: null, timedOut: false, timeLimitMs, runtimeMs: 0, modelConstructionMs: 0, wasmInitializationMs: 0, solveRuntimeMs: 0, modelHash: modelHash(project), scenarioHashes: patches.map((patch) => scenarioHash(patch)), problemHash: fnv1a(problem), message };
 }
 
 export async function optimizeCapacityPlan(project: NetworkProject, requirementsInput: CapacityPlanRequirements = {}, options: SolverRunOptions = {}): Promise<CapacityOptimizationResult> {
@@ -474,15 +489,21 @@ export async function optimizeCapacityPlan(project: NetworkProject, requirements
       scenarioHashes: patches.map((patch) => scenarioHash(patch)),
     };
   }
+  const startedAt = performanceNow();
+  const modelStartedAt = performanceNow();
   const built = buildCapacityUpgradeMILP(project, requirementsInput);
+  const modelConstructionMs = performanceNow() - modelStartedAt;
   const scenarioHashes = built.patches.map((patch) => scenarioHash(patch));
   if (built.preflightError) return { diagnostics: syntheticDiagnostics(project, built.patches, built.problem, timeLimitMs, 'Infeasible', 'infeasible', built.preflightError), candidate: null, selectedUpgrades: [], requirements: built.requirements, scenarioHashes };
   if (!built.variables.length) return { diagnostics: syntheticDiagnostics(project, built.patches, built.problem, timeLimitMs, 'Optimal', 'optimal', 'No upgrade decisions are required or available.'), candidate: null, selectedUpgrades: [], requirements: built.requirements, scenarioHashes };
 
-  const startedAt = performanceNow();
+  const wasmStartedAt = performanceNow();
   const highs = await loadHighs(options);
+  const wasmInitializationMs = performanceNow() - wasmStartedAt;
+  const solveStartedAt = performanceNow();
   const raw = highs.solve(built.problem, { output_flag: false, time_limit: timeLimitMs / 1000, mip_rel_gap: 0 });
-  const diagnostics = diagnosticsFrom(raw, project, built.patches, built.problem, startedAt, timeLimitMs);
+  const solveRuntimeMs = performanceNow() - solveStartedAt;
+  const diagnostics = diagnosticsFrom(raw, project, built.patches, built.problem, { startedAt, modelConstructionMs, wasmInitializationMs, solveRuntimeMs }, timeLimitMs);
   const selectedUpgrades = built.variables.filter((variable) => (numeric(raw.Columns?.[variable.name]?.Primal) ?? 0) > 0.5).map(({ linkId, fromCapacityGbps, toCapacityGbps, cost }) => ({ linkId, fromCapacityGbps, toCapacityGbps, cost })).sort((a, b) => a.linkId.localeCompare(b.linkId));
   const canReturnCandidate = diagnostics.proof === 'optimal' || diagnostics.proof === 'feasible-incumbent';
   const objective = diagnostics.objectiveValue ?? selectedUpgrades.reduce((sum, item) => sum + item.cost, 0);
