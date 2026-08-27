@@ -67,12 +67,13 @@ jobs:
           rm -rf /tmp/phase35b && mkdir -p /tmp/phase35b
           tar -xzf /tmp/phase35b.tar.gz -C /tmp/phase35b
           python /tmp/phase35b/apply_phase35b.py
-      - name: Synchronize integration goldens
+      - name: Synchronize integration goldens and legacy browser workflows
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
+          import re
 
           level1 = Path('tests/level1.test.ts')
           text = level1.read_text()
@@ -82,8 +83,7 @@ jobs:
           new_list = "assert.deepEqual(scenarios.map((item) => item.id), ['continental-service-network', 'maintenance-trap', 'growth-wall', 'resilience-gap', 'blank']);"
           if old_title not in text or old_list not in text:
               raise SystemExit('Level 1 bundled-scenario golden did not match the expected frozen baseline')
-          text = text.replace(old_title, new_title, 1).replace(old_list, new_list, 1)
-          level1.write_text(text)
+          level1.write_text(text.replace(old_title, new_title, 1).replace(old_list, new_list, 1))
 
           old_hash = 'sha256:b2897b18de725eedfeb9e83f97e92b67f3f8a55f15bc1252fa645646584c32c2'
           new_hash = 'sha256:661d1e8c85aea919e8379981ad45f0554d9fe613e18aa52808f1797624fa0e65'
@@ -93,6 +93,35 @@ jobs:
               if source.count(old_hash) != 1:
                   raise SystemExit(f'{filename} did not contain exactly one stale flagship hash')
               path.write_text(source.replace(old_hash, new_hash, 1))
+
+          helper = """\nasync function importJsonThroughReview(page: Page, path: string): Promise<void> {\n  await page.getByTestId('import-json').click();\n  await page.getByRole('button', { name: 'Canonical JSON' }).click();\n  await page.getByTestId('json-import-file').setInputFiles(path);\n  await expect(page.getByTestId('import-review')).toBeVisible();\n  await page.getByTestId('open-imported-network').click();\n}\n"""
+
+          hardening = Path('e2e/level3-hardening.spec.ts')
+          source = hardening.read_text()
+          hardening_anchor = "async function waitForOptimizer(page: Page) { await expect(page.getByTestId('optimizer-status')).toContainText(/ready|HiGHS WASM/i, { timeout: 30_000 }); }\n"
+          if hardening_anchor not in source:
+              raise SystemExit('level3-hardening import helper anchor changed')
+          source = source.replace(hardening_anchor, hardening_anchor + helper, 1)
+          old_export = "await openWorkbench(page); const [download] = await Promise.all([page.waitForEvent('download'), page.getByTestId('export-json').click()]);"
+          new_export = "await openWorkbench(page); await page.getByTestId('scenario-maintenance-trap').click(); const [download] = await Promise.all([page.waitForEvent('download'), page.getByTestId('export-json').click()]);"
+          if old_export not in source:
+              raise SystemExit('level3-hardening export round-trip anchor changed')
+          source = source.replace(old_export, new_export, 1)
+          source, count = re.subn(r"await page\.getByTestId\('import-file'\)\.setInputFiles\(([^)]+)\);", r"await importJsonThroughReview(page, \1);", source)
+          if count != 2:
+              raise SystemExit(f'expected 2 legacy JSON imports in level3-hardening, found {count}')
+          hardening.write_text(source)
+
+          adversarial = Path('e2e/level3-adversarial.spec.ts')
+          source = adversarial.read_text()
+          adversarial_anchor = "async function openHarnessedWorkbench(page: Page): Promise<void> {\n  await installModelContextHarness(page);\n  await page.goto('/');\n  await expect(page.getByTestId('topology-canvas')).toBeVisible();\n  await expect(page.getByTestId('analysis-journey')).toBeVisible();\n}\n"
+          if adversarial_anchor not in source:
+              raise SystemExit('level3-adversarial import helper anchor changed')
+          source = source.replace(adversarial_anchor, adversarial_anchor + helper, 1)
+          source, count = re.subn(r"await page\.getByTestId\('import-file'\)\.setInputFiles\(([^)]+)\);", r"await importJsonThroughReview(page, \1);", source)
+          if count != 2:
+              raise SystemExit(f'expected 2 legacy JSON imports in level3-adversarial, found {count}')
+          adversarial.write_text(source)
           PY
       - uses: actions/setup-node@v4
         with:
