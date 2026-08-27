@@ -15,8 +15,10 @@
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "benchmark:level2": "node --experimental-strip-types benchmarks/level2-medium.ts",
     "benchmark:level3": "node --experimental-strip-types benchmarks/level3-optimizer.ts",
-    "benchmark:scale": "node --experimental-strip-types benchmarks/scale.ts",
-    "test:e2e": "playwright test"
+    "benchmark:scale": "npm run benchmark:scale:engine && npm run benchmark:scale:browser",
+    "test:e2e": "playwright test",
+    "benchmark:scale:engine": "node --experimental-strip-types benchmarks/scale.ts",
+    "benchmark:scale:browser": "playwright test --config=playwright.scale.config.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
