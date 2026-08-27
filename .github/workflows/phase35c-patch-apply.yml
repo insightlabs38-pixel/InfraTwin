@@ -26,7 +26,7 @@ jobs:
             exit 0
           fi
           base64 -d "$PATCH_B64" | gzip -d > /tmp/phase35c.patch
-          patch -p1 < /tmp/phase35c.patch
+          patch -p4 < /tmp/phase35c.patch
           rm -f "$PATCH_B64"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
