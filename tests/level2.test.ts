@@ -86,7 +86,7 @@ class FakeWorker implements ContingencyWorkerLike {
       try {
         if (!this.project) throw new Error('not initialized');
         const contingency = runSingleLinkContingency(this.project, request.linkId, this.basePatch, { baseModelHash: this.baseModelHash });
-        this.onmessage?.({ data: { taskId: request.taskId, ok: true, contingency } } as MessageEvent<ContingencyWorkerResponse>);
+        this.onmessage?.({ data: { taskId: request.taskId, ok: true, contingency } } as unknown as MessageEvent<ContingencyWorkerResponse>);
       } catch (error) {
         this.onmessage?.({ data: { taskId: request.taskId, ok: false, error: error instanceof Error ? error.message : 'failed' } } as MessageEvent<ContingencyWorkerResponse>);
       }
