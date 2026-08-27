@@ -108,7 +108,7 @@ const context = {
   cpuModel: os.cpus()[0]?.model ?? 'unknown',
   totalMemoryBytes: os.totalmem(),
   commit: process.env.GITHUB_SHA ?? process.env.VERCEL_GIT_COMMIT_SHA ?? 'local',
-  benchmarkKind: 'node-engine-baseline',
+  benchmarkKind: 'phase35c-node-engine-scale',
 };
 
 mkdirSync('benchmark-results', { recursive: true });
@@ -123,7 +123,13 @@ for (const row of routeRows) {
 }
 console.log(`\nMachine-readable output: benchmark-results/scale.json (${measurements.length} measurements)`);
 
-// Catastrophic-regression guard only: no fragile millisecond assertions.
+// Catastrophic-regression guard only: no fragile millisecond assertions. The historical value is the frozen
+// pre-optimization Tier-B SPP measurement from measurement/phase-3-5c-baseline on the same GitHub-hosted runner class.
+const TIER_B_HISTORICAL_BASELINE_MS = 896.511;
+const TIER_B_CATASTROPHIC_MULTIPLIER = 5;
 const tierBMain = routeRows.find((row) => row.tier === 'B' && row.routingMode === 'single-shortest-path' && row.workload === 'concentrated-sources' && row.operation === 'route-project');
 if (!tierBMain?.success) throw new Error('Tier B baseline routing benchmark must complete successfully.');
-if (tierBMain.runtimeMs > 120_000) throw new Error(`Tier B routing exceeded catastrophic 120s guard (${tierBMain.runtimeMs.toFixed(1)} ms).`);
+const tierBCatastrophicThresholdMs = TIER_B_HISTORICAL_BASELINE_MS * TIER_B_CATASTROPHIC_MULTIPLIER;
+if (tierBMain.runtimeMs > tierBCatastrophicThresholdMs) {
+  throw new Error(`Tier B routing exceeded the broad 5× historical regression guard (${tierBMain.runtimeMs.toFixed(1)} ms > ${tierBCatastrophicThresholdMs.toFixed(1)} ms).`);
+}
