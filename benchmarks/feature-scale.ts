@@ -65,7 +65,7 @@ function countsOf(project: ReturnType<typeof generateScaleProject>) {
 const context = {
   generatedAt: new Date().toISOString(), node: process.version, platform: process.platform, arch: process.arch,
   cpuCount: os.cpus().length, cpuModel: os.cpus()[0]?.model ?? 'unknown', totalMemoryBytes: os.totalmem(),
-  commit: process.env.GITHUB_SHA ?? 'local', benchmarkKind: 'phase35c-feature-envelopes',
+  commit: process.env.GITHUB_SHA ?? 'local', benchmarkKind: 'phase35c-feature-envelopes', isolatedProbeHeapLimitMiB: 4096,
 };
 const measurements: FeatureMeasurement[] = [];
 mkdirSync('benchmark-results', { recursive: true });
@@ -80,22 +80,24 @@ function add(row: FeatureMeasurement): void {
   console.log(`${row.operation.padEnd(22)} ${row.fixture.padEnd(42)} ${row.success ? `${row.runtimeMs.toFixed(1)} ms` : `BOUNDARY ${row.message ?? ''}`}${row.solverStatus ? ` · ${row.solverStatus}` : ''}`);
 }
 
-function childProbe(operation: string): { payload: ChildPayload | null; message: string } {
+function childProbe(operation: string): { payload: ChildPayload | null; message: string; wallRuntimeMs: number } {
+  const wallStartedAt = performance.now();
   const result = spawnSync(
     process.execPath,
     ['--experimental-strip-types', '--max-old-space-size=4096', 'benchmarks/feature-probe-child.ts', operation],
     { encoding: 'utf8', timeout: 120_000, maxBuffer: 8 * 1024 * 1024, env: process.env },
   );
+  const wallRuntimeMs = performance.now() - wallStartedAt;
   const marker = (result.stdout ?? '').split(/\r?\n/).findLast((line) => line.startsWith('PHASE35C_RESULT='));
   if (marker) {
-    try { return { payload: JSON.parse(marker.slice('PHASE35C_RESULT='.length)) as ChildPayload, message: '' }; }
+    try { return { payload: JSON.parse(marker.slice('PHASE35C_RESULT='.length)) as ChildPayload, message: '', wallRuntimeMs }; }
     catch { /* fall through to process-level failure evidence */ }
   }
   const stderr = (result.stderr ?? '').trim().split(/\r?\n/).slice(-8).join(' | ');
   const processMessage = result.error
     ? `${result.error.name}: ${result.error.message}`
     : `isolated process exited status=${String(result.status)} signal=${String(result.signal)}${stderr ? `; ${stderr}` : ''}`;
-  return { payload: null, message: processMessage };
+  return { payload: null, message: processMessage, wallRuntimeMs };
 }
 
 console.log('\nInfraTwin Phase 3.5C feature-scale benchmark');
@@ -135,26 +137,26 @@ const n1Boundary = childProbe('n1-500');
 if (n1Boundary.payload) {
   add({
     fixture: 'Tier C concentrated-source', counts: cCounts, operation: 'n1-sequential', isolatedProbe: true,
-    runtimeMs: Number(n1Boundary.payload.runtimeMs ?? 0), success: Boolean(n1Boundary.payload.success), scenarioCount: 500,
+    runtimeMs: Number(n1Boundary.payload.runtimeMs ?? n1Boundary.wallRuntimeMs), success: Boolean(n1Boundary.payload.success), scenarioCount: 500,
     completedScenarios: Number(n1Boundary.payload.completedScenarios ?? 0), coverageStatus: String(n1Boundary.payload.coverageStatus ?? ''),
     message: n1Boundary.payload.message ? String(n1Boundary.payload.message) : undefined,
   });
 } else {
-  add({ fixture: 'Tier C concentrated-source', counts: cCounts, operation: 'n1-sequential', isolatedProbe: true, runtimeMs: 120_000, success: false, scenarioCount: 500, message: n1Boundary.message });
+  add({ fixture: 'Tier C concentrated-source', counts: cCounts, operation: 'n1-sequential', isolatedProbe: true, runtimeMs: n1Boundary.wallRuntimeMs, success: false, scenarioCount: 500, message: n1Boundary.message });
 }
 
 const lpCounts = { nodes: 160, links: 360, demands: 135, regions: 8 };
 for (const [childOperation, featureOperation] of [['routing-lp-build', 'routing-lp-build'], ['routing-lp-solve', 'routing-lp-solve']] as const) {
   const probe = childProbe(childOperation);
   if (!probe.payload) {
-    add({ fixture: 'Routing LP ~100k variable probe', counts: lpCounts, operation: featureOperation, isolatedProbe: true, runtimeMs: 120_000, success: false, message: probe.message });
+    add({ fixture: 'Routing LP ~100k variable probe', counts: lpCounts, operation: featureOperation, isolatedProbe: true, runtimeMs: probe.wallRuntimeMs, success: false, message: probe.message });
     continue;
   }
   const estimate = probe.payload.estimate ?? {};
   const diagnostics = probe.payload.diagnostics ?? {};
   add({
     fixture: 'Routing LP ~100k variable probe', counts: lpCounts, operation: featureOperation, isolatedProbe: true,
-    runtimeMs: Number(probe.payload.runtimeMs ?? 0), success: Boolean(probe.payload.success),
+    runtimeMs: Number(probe.payload.runtimeMs ?? probe.wallRuntimeMs), success: Boolean(probe.payload.success),
     directedArcs: Number(estimate.directedArcs ?? 0), flowVariables: Number(estimate.flowVariables ?? 0), constraints: Number(estimate.constraints ?? 0),
     modelConstructionMs: Number(probe.payload.modelConstructionMs ?? diagnostics.modelConstructionMs ?? 0),
     wasmInitializationMs: Number(diagnostics.wasmInitializationMs ?? 0), solveRuntimeMs: Number(diagnostics.solveRuntimeMs ?? 0),
@@ -182,14 +184,14 @@ const capacityCounts = { nodes: 250, links: 600, demands: 200, regions: 8 };
 for (const [childOperation, featureOperation] of [['capacity-milp-build', 'capacity-milp-build'], ['capacity-milp-solve', 'capacity-milp-solve']] as const) {
   const probe = childProbe(childOperation);
   if (!probe.payload) {
-    add({ fixture: 'Tier B capacity-MILP 21-scenario probe', counts: capacityCounts, operation: featureOperation, isolatedProbe: true, runtimeMs: 120_000, success: false, message: probe.message });
+    add({ fixture: 'Tier B capacity-MILP 21-scenario probe', counts: capacityCounts, operation: featureOperation, isolatedProbe: true, runtimeMs: probe.wallRuntimeMs, success: false, message: probe.message });
     continue;
   }
   const estimate = probe.payload.estimate ?? {};
   const diagnostics = probe.payload.diagnostics ?? {};
   add({
     fixture: 'Tier B capacity-MILP 21-scenario probe', counts: capacityCounts, operation: featureOperation, isolatedProbe: true,
-    runtimeMs: Number(probe.payload.runtimeMs ?? 0), success: Boolean(probe.payload.success),
+    runtimeMs: Number(probe.payload.runtimeMs ?? probe.wallRuntimeMs), success: Boolean(probe.payload.success),
     scenarioCount: Number(estimate.scenarioCount ?? 0), decisionVariables: Number(estimate.decisionVariables ?? 0),
     decisionScenarioProduct: Number(estimate.decisionScenarioProduct ?? 0), constraints: Number(estimate.estimatedConstraints ?? 0),
     modelConstructionMs: Number(probe.payload.modelConstructionMs ?? diagnostics.modelConstructionMs ?? 0),
