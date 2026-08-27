@@ -67,7 +67,7 @@ export interface ChangePlanAnalysis {
   reasons: string[];
 }
 
-export interface ContingencyCase {
+export interface ContingencyCaseSummary {
   linkId: string;
   score: number;
   criticalUnsatisfiedGbps: number;
@@ -77,6 +77,10 @@ export interface ContingencyCase {
   severeOverloadGbps: number;
   affectedDemandIds: string[];
   patch: ScenarioPatch;
+}
+
+export interface ContingencyCase extends ContingencyCaseSummary {
+  /** Lazily rehydrated full scenario evidence. Aggregate N-1 rankings retain compact summaries only. */
   analysis: CapacityAnalysis;
 }
 
@@ -145,7 +149,7 @@ export type ContingencyWorkerRequest =
   | { type: 'run'; taskId: string; linkId: string };
 
 export type ContingencyWorkerResponse =
-  | { taskId: string; ok: true; contingency: ContingencyCase }
+  | { taskId: string; ok: true; contingency: ContingencyCaseSummary }
   | { taskId: string; ok: false; error: string };
 
 export interface AnalysisRunContext {
@@ -392,17 +396,43 @@ function contingencyScore(analysis: CapacityAnalysis): { score: number; critical
   };
 }
 
-export function runSingleLinkContingency(project: NetworkProject, linkId: string, basePatch?: ScenarioPatch | null, context: AnalysisRunContext = {}): ContingencyCase {
+function computeSingleLinkContingency(project: NetworkProject, linkId: string, basePatch?: ScenarioPatch | null, context: AnalysisRunContext = {}): { summary: ContingencyCaseSummary; analysis: CapacityAnalysis } {
   const link = project.links.find((item) => item.id === linkId);
   if (!link || link.available === false) throw new Error(`Link ${linkId} is not eligible for N-1 analysis.`);
   const patch = mergeFailurePatch(basePatch, linkId);
   const analysis = runScenarioCapacityAnalysis(project, patch, context);
   const scoring = contingencyScore(analysis);
   return {
-    linkId, score: scoring.score, criticalUnsatisfiedGbps: scoring.criticalUnsatisfiedGbps, verdict: analysis.result.verdict,
-    peakUtilizationPct: round(analysis.routing.peakUtilizationPct), unroutedDemandGbps: scoring.unroutedDemandGbps,
-    severeOverloadGbps: scoring.severeOverloadGbps, affectedDemandIds: scoring.affectedDemandIds, patch, analysis,
+    summary: {
+      linkId, score: scoring.score, criticalUnsatisfiedGbps: scoring.criticalUnsatisfiedGbps, verdict: analysis.result.verdict,
+      peakUtilizationPct: round(analysis.routing.peakUtilizationPct), unroutedDemandGbps: scoring.unroutedDemandGbps,
+      severeOverloadGbps: scoring.severeOverloadGbps, affectedDemandIds: scoring.affectedDemandIds, patch,
+    },
+    analysis,
   };
+}
+
+export function runSingleLinkContingencySummary(project: NetworkProject, linkId: string, basePatch?: ScenarioPatch | null, context: AnalysisRunContext = {}): ContingencyCaseSummary {
+  return computeSingleLinkContingency(project, linkId, basePatch, context).summary;
+}
+
+export function runSingleLinkContingency(project: NetworkProject, linkId: string, basePatch?: ScenarioPatch | null, context: AnalysisRunContext = {}): ContingencyCase {
+  const { summary, analysis } = computeSingleLinkContingency(project, linkId, basePatch, context);
+  return { ...summary, analysis };
+}
+
+function lazyContingencyCase(project: NetworkProject, summary: ContingencyCaseSummary, context: AnalysisRunContext = {}): ContingencyCase {
+  let cachedAnalysis: CapacityAnalysis | null = null;
+  const contingency = { ...summary } as ContingencyCase;
+  Object.defineProperty(contingency, 'analysis', {
+    enumerable: false,
+    configurable: false,
+    get: () => {
+      cachedAnalysis ??= runScenarioCapacityAnalysis(project, summary.patch, context);
+      return cachedAnalysis;
+    },
+  });
+  return contingency;
 }
 
 function finalizeContingencies(
@@ -453,7 +483,7 @@ export function runLinkContingencies(project: NetworkProject, basePatch?: Scenar
   const start = now();
   const { ids, totalEligible } = eligibleLinkIds(project, maxScenarios);
   const context: AnalysisRunContext = { baseModelHash: modelHash(project) };
-  const cases = ids.map((linkId) => runSingleLinkContingency(project, linkId, basePatch, context));
+  const cases = ids.map((linkId) => lazyContingencyCase(project, runSingleLinkContingencySummary(project, linkId, basePatch, context), context));
   return finalizeContingencies(project, basePatch, cases, start, totalEligible, ids.length < totalEligible ? 'partial' : 'complete', 1, 'sequential');
 }
 
@@ -462,7 +492,7 @@ function boundedWorkerCount(value: number | undefined): number {
   return Math.max(1, Math.min(MAX_WORKERS, Math.floor(value ?? fallback)));
 }
 
-function workerTask(worker: ContingencyWorkerLike, request: Extract<ContingencyWorkerRequest, { type: 'run' }>, signal: AbortSignal | undefined, timeoutMs: number): Promise<ContingencyCase> {
+function workerTask(worker: ContingencyWorkerLike, request: Extract<ContingencyWorkerRequest, { type: 'run' }>, signal: AbortSignal | undefined, timeoutMs: number): Promise<ContingencyCaseSummary> {
   return new Promise((resolve, reject) => {
     let settled = false;
     const cleanup = () => {
@@ -533,8 +563,8 @@ export async function runLinkContingenciesAsync(project: NetworkProject, basePat
           running += 1; progress();
           try {
             const remaining = Math.max(1, timeLimitMs - (now() - start));
-            const contingency = await workerTask(worker, { type: 'run', taskId: `${workerIndex}:${linkId}`, linkId }, options.signal, remaining);
-            cases.push(contingency);
+            const summary = await workerTask(worker, { type: 'run', taskId: `${workerIndex}:${linkId}`, linkId }, options.signal, remaining);
+            cases.push(lazyContingencyCase(project, summary, context));
           } finally {
             running -= 1; progress();
           }
@@ -550,7 +580,7 @@ export async function runLinkContingenciesAsync(project: NetworkProject, basePat
           try {
             await new Promise<void>((resolve) => setTimeout(resolve, 0));
             checkBudget();
-            cases.push(runSingleLinkContingency(project, linkId, basePatch, context));
+            cases.push(lazyContingencyCase(project, runSingleLinkContingencySummary(project, linkId, basePatch, context), context));
           } finally {
             running -= 1; progress();
           }

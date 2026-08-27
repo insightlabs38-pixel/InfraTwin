@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-import { runSingleLinkContingency, type AnalysisRunContext, type ContingencyWorkerRequest, type ContingencyWorkerResponse } from '@infratwin/evidence';
+import { runSingleLinkContingencySummary, type AnalysisRunContext, type ContingencyWorkerRequest, type ContingencyWorkerResponse } from '@infratwin/evidence';
 import type { NetworkProject, ScenarioPatch } from '@infratwin/model';
 
 const scope = self as DedicatedWorkerGlobalScope;
@@ -18,7 +18,7 @@ scope.onmessage = (event: MessageEvent<ContingencyWorkerRequest>) => {
   }
   try {
     if (!project) throw new Error('Contingency worker was not initialized.');
-    const contingency = runSingleLinkContingency(project, request.linkId, basePatch, context);
+    const contingency = runSingleLinkContingencySummary(project, request.linkId, basePatch, context);
     const response: ContingencyWorkerResponse = { taskId: request.taskId, ok: true, contingency };
     scope.postMessage(response);
   } catch (error) {
