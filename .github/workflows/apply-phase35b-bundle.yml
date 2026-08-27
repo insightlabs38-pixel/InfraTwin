@@ -22,8 +22,23 @@ jobs:
         run: |
           set -euo pipefail
           test "$(find .github/phase35b_bundle -maxdepth 1 -type f -name 'part*' | wc -l)" -eq 7
-          cat .github/phase35b_bundle/part00 .github/phase35b_bundle/part01 .github/phase35b_bundle/part02 .github/phase35b_bundle/part03 .github/phase35b_bundle/part04 .github/phase35b_bundle/part05 .github/phase35b_bundle/part06 > /tmp/phase35b.b64
-          base64 --decode /tmp/phase35b.b64 > /tmp/phase35b.tar.gz
+          python - <<'PY'
+          from pathlib import Path
+          import base64, re
+          parts = [Path(f'.github/phase35b_bundle/part{i:02d}').read_bytes() for i in range(7)]
+          raw = b''.join(parts)
+          clean = re.sub(rb'[^A-Za-z0-9+/=]', b'', raw)
+          print(f'phase35b bundle bytes: raw={len(raw)} clean={len(clean)} removed={len(raw)-len(clean)} remainder={len(clean)%4}')
+          if len(clean) % 4 == 1:
+              raise SystemExit('base64 payload has impossible length (mod 4 == 1); encoded data is missing or has an extra alphabet character')
+          clean += b'=' * ((-len(clean)) % 4)
+          try:
+              decoded = base64.b64decode(clean, validate=True)
+          except Exception as exc:
+              raise SystemExit(f'base64 validation failed: {exc}')
+          Path('/tmp/phase35b.tar.gz').write_bytes(decoded)
+          print(f'phase35b archive bytes: {len(decoded)}')
+          PY
           gzip -t /tmp/phase35b.tar.gz
           rm -rf /tmp/phase35b && mkdir -p /tmp/phase35b
           tar -xzf /tmp/phase35b.tar.gz -C /tmp/phase35b
