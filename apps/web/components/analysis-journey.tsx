@@ -1,55 +1,21 @@
 interface AnalysisJourneyProps {
-  scenarioLabel: string;
-  verdict: 'PASS' | 'FAIL';
+  planLabel: string;
+  authority: 'DRAFT' | 'PASS' | 'FAIL' | 'STALE';
   peakUtilizationPct: number;
   violationCount: number;
   primaryFailure?: string | null;
   candidateLabel: string;
-  verificationStatus?: 'verified' | 'disagreement' | null;
+  verificationStatus?: 'verified' | 'disagreement' | 'stale' | null;
   nextStep: string;
 }
-
-function pct(value: number): string {
-  return `${Math.round(value * 10) / 10}%`;
-}
-
-export function AnalysisJourney({
-  scenarioLabel,
-  verdict,
-  peakUtilizationPct,
-  violationCount,
-  primaryFailure,
-  candidateLabel,
-  verificationStatus,
-  nextStep,
-}: AnalysisJourneyProps) {
-  return (
-    <section className="journey-strip" aria-label="Current engineering decision journey" data-testid="analysis-journey">
-      <article className="journey-step">
-        <span>1 · What are we testing?</span>
-        <strong>{scenarioLabel}</strong>
-        <small>One explicit baseline or scenario overlay.</small>
-      </article>
-      <article className="journey-step topology-step">
-        <span>2 · Network topology</span>
-        <strong>Live canonical model</strong>
-        <small>Routes, load, failures, and selected evidence share stable IDs.</small>
-      </article>
-      <article className={`journey-step result-step ${verdict === 'PASS' ? 'pass' : 'fail'}`}>
-        <span>3 · Result</span>
-        <strong data-testid="verdict">{verdict}</strong>
-        <small>Peak {pct(peakUtilizationPct)} · {violationCount} modeled violation(s)</small>
-      </article>
-      <article className={`journey-step why-step ${verdict === 'FAIL' ? 'active' : ''}`}>
-        <span>4 · Why?</span>
-        <strong>{verdict === 'PASS' ? 'No active violation' : primaryFailure ?? 'Inspect evidence'}</strong>
-        <small>{verdict === 'PASS' ? 'The displayed assumptions satisfy their constraints.' : 'Open the evidence panel for the concrete constraint and route.'}</small>
-      </article>
-      <article className={`journey-step action-step ${verificationStatus === 'verified' ? 'verified' : ''}`}>
-        <span>5 · What should we do?</span>
-        <strong>{verificationStatus === 'verified' ? 'VERIFIED candidate' : candidateLabel}</strong>
-        <small>{nextStep}</small>
-      </article>
-    </section>
-  );
+function pct(value: number): string { return `${Math.round(value * 10) / 10}%`; }
+export function AnalysisJourney({ planLabel, authority, peakUtilizationPct, violationCount, primaryFailure, candidateLabel, verificationStatus, nextStep }: AnalysisJourneyProps) {
+  const pass = authority === 'PASS'; const fail = authority === 'FAIL';
+  return <section className="journey-strip" aria-label="Current change planning journey" data-testid="analysis-journey">
+    <article className="journey-step"><span>1 · Current Change Plan</span><strong>{planLabel}</strong><small>Human changes, constraints, locks, and proposals share one artifact.</small></article>
+    <article className="journey-step topology-step"><span>2 · Planned network</span><strong>Base + non-destructive plan</strong><small>The canonical base stays unchanged until an explicit external apply operation.</small></article>
+    <article className={`journey-step result-step ${pass ? 'pass' : fail ? 'fail' : ''}`}><span>3 · Analysis</span><strong data-testid="verdict">{authority}</strong><small>Live peak {pct(peakUtilizationPct)} · {violationCount} modeled violation(s)</small></article>
+    <article className={`journey-step why-step ${fail ? 'active' : ''}`}><span>4 · Why?</span><strong>{fail ? primaryFailure ?? 'Inspect evidence' : authority === 'STALE' ? 'Plan changed' : pass ? 'Constraints satisfied' : 'Run analysis'}</strong><small>{fail ? 'Inspect concrete route/capacity evidence.' : authority === 'STALE' ? 'Prior evidence is no longer authoritative.' : 'Analysis is tied to base + semantic plan hash.'}</small></article>
+    <article className={`journey-step action-step ${verificationStatus === 'verified' ? 'verified' : ''}`}><span>5 · Revision / verification</span><strong>{verificationStatus === 'verified' ? 'VERIFIED proposal' : verificationStatus === 'stale' ? 'STALE verification' : candidateLabel}</strong><small>{nextStep}</small></article>
+  </section>;
 }

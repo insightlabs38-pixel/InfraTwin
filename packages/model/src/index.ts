@@ -63,7 +63,12 @@ export interface ScenarioPatch {
   name: string;
   disabledNodeIds: string[];
   disabledLinkIds: string[];
+  /** Explicit restoration relative to a base project. Optional for Level 0–3 patch compatibility. */
+  enabledNodeIds?: string[];
+  enabledLinkIds?: string[];
   demandMultipliers: Array<{ demandId: string; multiplier: number }>;
+  /** Exact bandwidth is only needed when a zero-bandwidth base demand cannot be represented by a multiplier. */
+  demandBandwidthOverrides?: Array<{ demandId: string; bandwidthGbps: number }>;
   addedDemands: DemandModel[];
   linkCapacityOverrides: Array<{ linkId: string; capacityGbps: number }>;
 }
@@ -90,6 +95,81 @@ export interface CandidatePlan {
   commands: ModelCommand[];
   objective: { name: string; value: number; unit?: string };
   rationaleEvidenceIds: string[];
+}
+
+export type PlanActor = 'human' | 'agent';
+export type PlanHistoryActor = PlanActor | 'system';
+export type ChangePlanStatus = 'draft' | 'analyzed' | 'failing' | 'candidate' | 'verified';
+
+interface PlanChangeBase {
+  id: string;
+  actor: PlanActor;
+  createdAt: string;
+  rationaleEvidenceIds?: string[];
+}
+
+export type PlanChange =
+  | (PlanChangeBase & { type: 'disable_link' | 'enable_link'; target: { kind: 'link'; id: string }; payload: Record<string, never> })
+  | (PlanChangeBase & { type: 'disable_node' | 'enable_node'; target: { kind: 'node'; id: string }; payload: Record<string, never> })
+  | (PlanChangeBase & { type: 'set_link_capacity'; target: { kind: 'link'; id: string }; payload: { capacityGbps: number } })
+  | (PlanChangeBase & { type: 'set_demand_bandwidth'; target: { kind: 'demand'; id: string }; payload: { bandwidthGbps: number } })
+  | (PlanChangeBase & { type: 'add_demand'; target: { kind: 'demand'; id: string }; payload: { demand: DemandModel } })
+  | (PlanChangeBase & { type: 'demand_growth'; target: { kind: 'demands'; ids: string[] }; payload: { multiplier: number } });
+
+export interface PlanConstraints {
+  targetUtilizationPct: number;
+  budgetCostUnits: number | null;
+  requireN1: boolean;
+  protectedServiceClassIds: string[];
+}
+
+export interface PlanRestrictions {
+  lockedLinkIds: string[];
+  lockedNodeIds: string[];
+}
+
+export type PlanProposalState = 'pending' | 'accepted' | 'rejected';
+
+export interface PlanProposal {
+  id: string;
+  candidateId: string;
+  sourcePlanHash: string;
+  change: PlanChange;
+  state: PlanProposalState;
+  createdAt: string;
+  decidedAt?: string;
+}
+
+export interface PlanHistoryEvent {
+  id: string;
+  actor: PlanHistoryActor;
+  occurredAt: string;
+  action: string;
+  summary: string;
+  relatedId?: string;
+}
+
+export interface ChangePlan {
+  id: string;
+  name: string;
+  baseModelHash: string;
+  changes: PlanChange[];
+  constraints: PlanConstraints;
+  restrictions: PlanRestrictions;
+  proposals: PlanProposal[];
+  history: PlanHistoryEvent[];
+  status: ChangePlanStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlanEvidenceStamp {
+  baseModelHash: string;
+  planHash: string;
+}
+
+export interface PlanRevisionStamp extends PlanEvidenceStamp {
+  revisionHash: string;
 }
 
 export interface ValidationResult {
@@ -384,22 +464,378 @@ export function applyScenario(project: NetworkProject, patch?: ScenarioPatch | n
   const snapshot = cloneProject(project);
   const disabledNodes = new Set(patch.disabledNodeIds);
   const disabledLinks = new Set(patch.disabledLinkIds);
+  const enabledNodes = new Set(patch.enabledNodeIds ?? []);
+  const enabledLinks = new Set(patch.enabledLinkIds ?? []);
   const multipliers = new Map(patch.demandMultipliers.map((item) => [item.demandId, item.multiplier]));
+  const bandwidthOverrides = new Map((patch.demandBandwidthOverrides ?? []).map((item) => [item.demandId, item.bandwidthGbps]));
   const capacities = new Map(patch.linkCapacityOverrides.map((item) => [item.linkId, item.capacityGbps]));
 
-  snapshot.nodes = snapshot.nodes.map((node) => disabledNodes.has(node.id) ? { ...node, available: false } : node);
-  snapshot.links = snapshot.links.map((link) => ({
-    ...link,
-    available: disabledLinks.has(link.id) ? false : link.available,
-    capacityGbps: capacities.get(link.id) ?? link.capacityGbps,
-  }));
+  snapshot.nodes = snapshot.nodes.map((node) => enabledNodes.has(node.id) ? { ...node, available: true } : disabledNodes.has(node.id) ? { ...node, available: false } : node);
+  snapshot.links = snapshot.links.map((link) => {
+    const capacityGbps = capacities.get(link.id) ?? link.capacityGbps;
+    const upgradeOptions = capacities.has(link.id)
+      ? link.upgradeOptions?.filter((option) => option.capacityGbps > capacityGbps + 1e-9)
+      : link.upgradeOptions;
+    return {
+      ...link,
+      available: enabledLinks.has(link.id) ? true : disabledLinks.has(link.id) ? false : link.available,
+      capacityGbps,
+      ...(upgradeOptions === undefined ? {} : { upgradeOptions }),
+    };
+  });
   snapshot.demands = snapshot.demands.map((demand) => ({
     ...demand,
-    bandwidthGbps: demand.bandwidthGbps * (multipliers.get(demand.id) ?? 1),
+    bandwidthGbps: bandwidthOverrides.get(demand.id) ?? demand.bandwidthGbps * (multipliers.get(demand.id) ?? 1),
   }));
   snapshot.demands.push(...patch.addedDemands.map((demand) => ({ ...demand })));
   assertValidNetworkProject(snapshot);
   return snapshot;
+}
+
+
+function cloneChangePlan(plan: ChangePlan): ChangePlan {
+  return JSON.parse(JSON.stringify(plan)) as ChangePlan;
+}
+
+function normalizeStringIds(values: readonly string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort();
+}
+
+function assertPlanBoundToProject(project: NetworkProject, plan: ChangePlan): void {
+  const currentHash = modelHash(project);
+  if (plan.baseModelHash !== currentHash) throw new Error('Change Plan is stale because its base network changed.');
+}
+
+function historyEvent(plan: ChangePlan, actor: PlanHistoryActor, action: string, summary: string, occurredAt: string, relatedId?: string): PlanHistoryEvent {
+  const next = plan.history.length + 1;
+  return { id: `history-${next}`, actor, occurredAt, action, summary, relatedId };
+}
+
+export function describePlanChange(change: PlanChange): string {
+  switch (change.type) {
+    case 'disable_link': return `Take ${change.target.id} offline`;
+    case 'enable_link': return `Restore ${change.target.id}`;
+    case 'disable_node': return `Take node ${change.target.id} offline`;
+    case 'enable_node': return `Restore node ${change.target.id}`;
+    case 'set_link_capacity': return `Set ${change.target.id} capacity to ${change.payload.capacityGbps} Gbps`;
+    case 'set_demand_bandwidth': return `Set ${change.target.id} traffic to ${change.payload.bandwidthGbps} Gbps`;
+    case 'add_demand': return `Add ${change.payload.demand.name ?? change.payload.demand.id}: ${change.payload.demand.source}→${change.payload.demand.target} ${change.payload.demand.bandwidthGbps} Gbps`;
+    case 'demand_growth': return `Grow ${change.target.ids.join(', ')} by ${Math.round((change.payload.multiplier - 1) * 1000) / 10}%`;
+  }
+}
+
+function semanticPlanChange(change: PlanChange): unknown {
+  return { type: change.type, target: change.target, payload: change.payload };
+}
+
+export function changePlanSemanticValue(plan: ChangePlan): unknown {
+  return {
+    changes: plan.changes.map(semanticPlanChange),
+    constraints: {
+      targetUtilizationPct: plan.constraints.targetUtilizationPct,
+      budgetCostUnits: plan.constraints.budgetCostUnits,
+      requireN1: plan.constraints.requireN1,
+      protectedServiceClassIds: normalizeStringIds(plan.constraints.protectedServiceClassIds),
+    },
+    restrictions: {
+      lockedLinkIds: normalizeStringIds(plan.restrictions.lockedLinkIds),
+      lockedNodeIds: normalizeStringIds(plan.restrictions.lockedNodeIds),
+    },
+  };
+}
+
+export function changePlanHash(plan: ChangePlan): string {
+  return `sha256:${sha256Hex(stableStringify(changePlanSemanticValue(plan)))}`;
+}
+
+export function changePlanRevisionHash(plan: ChangePlan): string {
+  return `sha256:${sha256Hex(stableStringify({
+    semantic: changePlanSemanticValue(plan),
+    proposals: plan.proposals.map((proposal) => ({ candidateId: proposal.candidateId, sourcePlanHash: proposal.sourcePlanHash, state: proposal.state, change: semanticPlanChange(proposal.change) })),
+  }))}`;
+}
+
+export function changePlanEvidenceStamp(project: NetworkProject, plan: ChangePlan): PlanEvidenceStamp {
+  return { baseModelHash: modelHash(project), planHash: changePlanHash(plan) };
+}
+
+export function changePlanRevisionStamp(project: NetworkProject, plan: ChangePlan): PlanRevisionStamp {
+  return { ...changePlanEvidenceStamp(project, plan), revisionHash: changePlanRevisionHash(plan) };
+}
+
+export function isPlanEvidenceFresh(stamp: PlanEvidenceStamp | null | undefined, project: NetworkProject, plan: ChangePlan): boolean {
+  return Boolean(stamp && stamp.baseModelHash === modelHash(project) && stamp.planHash === changePlanHash(plan));
+}
+
+export function isPlanRevisionFresh(stamp: PlanRevisionStamp | null | undefined, project: NetworkProject, plan: ChangePlan): boolean {
+  return Boolean(isPlanEvidenceFresh(stamp, project, plan) && stamp?.revisionHash === changePlanRevisionHash(plan));
+}
+
+export function createChangePlan(project: NetworkProject, name = 'New Change Plan', options: { id?: string; now?: string } = {}): ChangePlan {
+  const now = options.now ?? new Date().toISOString();
+  return {
+    id: options.id ?? `plan:${project.id}`,
+    name: name.trim() || 'New Change Plan',
+    baseModelHash: modelHash(project),
+    changes: [],
+    constraints: { targetUtilizationPct: 80, budgetCostUnits: null, requireN1: false, protectedServiceClassIds: [] },
+    restrictions: { lockedLinkIds: [], lockedNodeIds: [] },
+    proposals: [],
+    history: [{ id: 'history-1', actor: 'human', occurredAt: now, action: 'created_plan', summary: `Created ${name.trim() || 'New Change Plan'}` }],
+    status: 'draft',
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export function validateChangePlan(project: NetworkProject, plan: ChangePlan): ValidationResult {
+  const errors: string[] = [];
+  if (!plan || typeof plan !== 'object') return { valid: false, errors: ['plan must be an object'] };
+  if (!nonEmptyString(plan.id)) errors.push('plan.id must be non-empty');
+  if (!nonEmptyString(plan.name)) errors.push('plan.name must be non-empty');
+  if (plan.baseModelHash !== modelHash(project)) errors.push('plan.baseModelHash does not match the base network');
+  if (!finiteNumber(plan.constraints.targetUtilizationPct) || plan.constraints.targetUtilizationPct <= 0 || plan.constraints.targetUtilizationPct > 100) errors.push('plan target utilization must be in (0,100]');
+  if (plan.constraints.budgetCostUnits !== null && (!finiteNumber(plan.constraints.budgetCostUnits) || plan.constraints.budgetCostUnits < 0)) errors.push('plan budget must be null or non-negative');
+  const nodeIds = new Set(project.nodes.map((node) => node.id));
+  const linkIds = new Set(project.links.map((link) => link.id));
+  const demandIds = new Set(project.demands.map((demand) => demand.id));
+  const classIds = new Set(project.serviceClasses.map((serviceClass) => serviceClass.id));
+  for (const id of plan.restrictions.lockedLinkIds) if (!linkIds.has(id)) errors.push(`locked link ${id} does not exist`);
+  for (const id of plan.restrictions.lockedNodeIds) if (!nodeIds.has(id)) errors.push(`locked node ${id} does not exist`);
+  for (const id of plan.constraints.protectedServiceClassIds) if (!classIds.has(id)) errors.push(`protected service class ${id} does not exist`);
+  const seen = new Set<string>();
+  const addedDemandIds = new Set<string>();
+  for (const change of plan.changes) {
+    if (!nonEmptyString(change.id) || seen.has(change.id)) errors.push(`plan change id ${change.id || '(empty)'} must be unique`); else seen.add(change.id);
+    if (!['human', 'agent'].includes(change.actor)) errors.push(`plan change ${change.id} has invalid actor`);
+    switch (change.type) {
+      case 'disable_link': case 'enable_link': case 'set_link_capacity':
+        if (!linkIds.has(change.target.id)) errors.push(`plan change ${change.id} references unknown link ${change.target.id}`);
+        if (change.type === 'set_link_capacity' && (!finiteNumber(change.payload.capacityGbps) || change.payload.capacityGbps <= 0)) errors.push(`plan change ${change.id} capacity must be > 0`);
+        break;
+      case 'disable_node': case 'enable_node':
+        if (!nodeIds.has(change.target.id)) errors.push(`plan change ${change.id} references unknown node ${change.target.id}`);
+        break;
+      case 'set_demand_bandwidth':
+        if (!demandIds.has(change.target.id) && !addedDemandIds.has(change.target.id)) errors.push(`plan change ${change.id} references unknown demand ${change.target.id}`);
+        if (!finiteNumber(change.payload.bandwidthGbps) || change.payload.bandwidthGbps < 0) errors.push(`plan change ${change.id} bandwidth must be >= 0`);
+        break;
+      case 'add_demand': {
+        const demand = change.payload.demand;
+        if (demand.id !== change.target.id) errors.push(`plan change ${change.id} demand target must match payload id`);
+        if (demandIds.has(demand.id) || addedDemandIds.has(demand.id)) errors.push(`plan change ${change.id} adds duplicate demand ${demand.id}`); else addedDemandIds.add(demand.id);
+        if (!nodeIds.has(demand.source) || !nodeIds.has(demand.target)) errors.push(`plan change ${change.id} demand endpoints must exist`);
+        if (!classIds.has(demand.serviceClassId)) errors.push(`plan change ${change.id} service class must exist`);
+        if (!finiteNumber(demand.bandwidthGbps) || demand.bandwidthGbps < 0) errors.push(`plan change ${change.id} demand bandwidth must be >= 0`);
+        break;
+      }
+      case 'demand_growth':
+        if (!finiteNumber(change.payload.multiplier) || change.payload.multiplier < 0) errors.push(`plan change ${change.id} multiplier must be >= 0`);
+        if (!change.target.ids.length) errors.push(`plan change ${change.id} must target at least one demand`);
+        for (const id of change.target.ids) if (!demandIds.has(id) && !addedDemandIds.has(id)) errors.push(`plan change ${change.id} references unknown demand ${id}`);
+        break;
+    }
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+export function assertValidChangePlan(project: NetworkProject, plan: ChangePlan): void {
+  const result = validateChangePlan(project, plan);
+  if (!result.valid) throw new Error(`Invalid Change Plan: ${result.errors.join('; ')}`);
+}
+
+export function compileChangePlanToScenarioPatch(project: NetworkProject, plan: ChangePlan): ScenarioPatch {
+  assertPlanBoundToProject(project, plan);
+  assertValidChangePlan(project, plan);
+  const linkAvailability = new Map(project.links.map((link) => [link.id, link.available !== false]));
+  const nodeAvailability = new Map(project.nodes.map((node) => [node.id, node.available !== false]));
+  const linkCapacity = new Map(project.links.map((link) => [link.id, link.capacityGbps]));
+  const baseBandwidth = new Map(project.demands.map((demand) => [demand.id, demand.bandwidthGbps]));
+  const demandBandwidth = new Map(baseBandwidth);
+  const addedDemands = new Map<string, DemandModel>();
+
+  for (const change of plan.changes) {
+    switch (change.type) {
+      case 'disable_link': linkAvailability.set(change.target.id, false); break;
+      case 'enable_link': linkAvailability.set(change.target.id, true); break;
+      case 'disable_node': nodeAvailability.set(change.target.id, false); break;
+      case 'enable_node': nodeAvailability.set(change.target.id, true); break;
+      case 'set_link_capacity': linkCapacity.set(change.target.id, change.payload.capacityGbps); break;
+      case 'set_demand_bandwidth':
+        if (addedDemands.has(change.target.id)) addedDemands.get(change.target.id)!.bandwidthGbps = change.payload.bandwidthGbps;
+        else demandBandwidth.set(change.target.id, change.payload.bandwidthGbps);
+        break;
+      case 'add_demand': addedDemands.set(change.payload.demand.id, { ...change.payload.demand }); break;
+      case 'demand_growth':
+        for (const demandId of change.target.ids) {
+          if (addedDemands.has(demandId)) addedDemands.get(demandId)!.bandwidthGbps *= change.payload.multiplier;
+          else demandBandwidth.set(demandId, (demandBandwidth.get(demandId) ?? 0) * change.payload.multiplier);
+        }
+        break;
+    }
+  }
+
+  const disabledNodeIds: string[] = [];
+  const enabledNodeIds: string[] = [];
+  for (const node of project.nodes) {
+    const final = nodeAvailability.get(node.id) ?? true; const base = node.available !== false;
+    if (!final && base) disabledNodeIds.push(node.id);
+    if (final && !base) enabledNodeIds.push(node.id);
+  }
+  const disabledLinkIds: string[] = [];
+  const enabledLinkIds: string[] = [];
+  for (const link of project.links) {
+    const final = linkAvailability.get(link.id) ?? true; const base = link.available !== false;
+    if (!final && base) disabledLinkIds.push(link.id);
+    if (final && !base) enabledLinkIds.push(link.id);
+  }
+  const demandMultipliers: Array<{ demandId: string; multiplier: number }> = [];
+  const demandBandwidthOverrides: Array<{ demandId: string; bandwidthGbps: number }> = [];
+  for (const demand of project.demands) {
+    const final = demandBandwidth.get(demand.id) ?? demand.bandwidthGbps;
+    if (Math.abs(final - demand.bandwidthGbps) <= 1e-12) continue;
+    if (Math.abs(demand.bandwidthGbps) > 1e-12) demandMultipliers.push({ demandId: demand.id, multiplier: final / demand.bandwidthGbps });
+    else demandBandwidthOverrides.push({ demandId: demand.id, bandwidthGbps: final });
+  }
+  const linkCapacityOverrides = project.links.flatMap((link) => {
+    const final = linkCapacity.get(link.id) ?? link.capacityGbps;
+    return Math.abs(final - link.capacityGbps) <= 1e-12 ? [] : [{ linkId: link.id, capacityGbps: final }];
+  });
+  const patch: ScenarioPatch = {
+    id: `change-plan:${plan.id}:${changePlanHash(plan).split(':')[1].slice(0, 12)}`,
+    name: plan.name,
+    disabledNodeIds: disabledNodeIds.sort(), disabledLinkIds: disabledLinkIds.sort(),
+    demandMultipliers: demandMultipliers.sort((a, b) => a.demandId.localeCompare(b.demandId)),
+    addedDemands: [...addedDemands.values()].sort((a, b) => a.id.localeCompare(b.id)).map((demand) => ({ ...demand })),
+    linkCapacityOverrides: linkCapacityOverrides.sort((a, b) => a.linkId.localeCompare(b.linkId)),
+  };
+  if (enabledNodeIds.length) patch.enabledNodeIds = enabledNodeIds.sort();
+  if (enabledLinkIds.length) patch.enabledLinkIds = enabledLinkIds.sort();
+  if (demandBandwidthOverrides.length) patch.demandBandwidthOverrides = demandBandwidthOverrides.sort((a, b) => a.demandId.localeCompare(b.demandId));
+  return patch;
+}
+
+export function applyChangePlan(project: NetworkProject, plan: ChangePlan): NetworkProject {
+  return applyScenario(project, compileChangePlanToScenarioPatch(project, plan));
+}
+
+function invalidatePlan(plan: ChangePlan, now: string, summary: string): ChangePlan {
+  const wasAuthoritative = plan.status === 'analyzed' || plan.status === 'failing' || plan.status === 'candidate' || plan.status === 'verified' || plan.proposals.some((proposal) => proposal.state === 'pending');
+  plan.status = 'draft';
+  plan.updatedAt = now;
+  if (wasAuthoritative) plan.history.push(historyEvent(plan, 'system', 'verification_invalidated', summary, now));
+  return plan;
+}
+
+export function renameChangePlan(plan: ChangePlan, name: string, now = new Date().toISOString()): ChangePlan {
+  const next = cloneChangePlan(plan); const trimmed = name.trim(); if (!trimmed) throw new Error('Plan name must be non-empty.');
+  next.name = trimmed; next.updatedAt = now; next.history.push(historyEvent(next, 'human', 'renamed_plan', `Renamed plan to ${trimmed}`, now)); return next;
+}
+
+export function addPlanChange(plan: ChangePlan, change: PlanChange, now = change.createdAt): ChangePlan {
+  const next = cloneChangePlan(plan);
+  if (next.changes.some((item) => item.id === change.id)) throw new Error(`Duplicate plan change id ${change.id}`);
+  next.changes.push(JSON.parse(JSON.stringify(change)) as PlanChange);
+  next.history.push(historyEvent(next, change.actor, 'added_change', describePlanChange(change), now, change.id));
+  return invalidatePlan(next, now, 'Verification invalidated because the Change Plan changed.');
+}
+
+export function removePlanChange(plan: ChangePlan, changeId: string, now = new Date().toISOString()): ChangePlan {
+  const next = cloneChangePlan(plan); const index = next.changes.findIndex((change) => change.id === changeId);
+  if (index < 0) throw new Error(`Unknown plan change ${changeId}`);
+  const [removed] = next.changes.splice(index, 1);
+  next.history.push(historyEvent(next, 'human', 'removed_change', `Removed ${describePlanChange(removed)}`, now, removed.id));
+  return invalidatePlan(next, now, 'Verification invalidated because a planned change was removed.');
+}
+
+export function setPlanConstraint<K extends keyof PlanConstraints>(plan: ChangePlan, key: K, value: PlanConstraints[K], now = new Date().toISOString()): ChangePlan {
+  const next = cloneChangePlan(plan); (next.constraints[key] as PlanConstraints[K]) = JSON.parse(JSON.stringify(value)) as PlanConstraints[K];
+  if (key === 'protectedServiceClassIds') next.constraints.protectedServiceClassIds = normalizeStringIds(next.constraints.protectedServiceClassIds);
+  next.history.push(historyEvent(next, 'human', 'set_constraint', `Set ${String(key)} to ${Array.isArray(value) ? value.join(', ') || 'none' : String(value)}`, now));
+  return invalidatePlan(next, now, 'Verification invalidated because plan constraints changed.');
+}
+
+export function setPlanLinkLocked(plan: ChangePlan, linkId: string, locked: boolean, now = new Date().toISOString()): ChangePlan {
+  const next = cloneChangePlan(plan); const values = new Set(next.restrictions.lockedLinkIds); locked ? values.add(linkId) : values.delete(linkId); next.restrictions.lockedLinkIds = [...values].sort();
+  next.history.push(historyEvent(next, 'human', locked ? 'locked_link' : 'unlocked_link', `${locked ? 'Locked' : 'Unlocked'} ${linkId} for agent/optimizer modification`, now, linkId));
+  return invalidatePlan(next, now, 'Verification invalidated because plan restrictions changed.');
+}
+
+export function setPlanNodeLocked(plan: ChangePlan, nodeId: string, locked: boolean, now = new Date().toISOString()): ChangePlan {
+  const next = cloneChangePlan(plan); const values = new Set(next.restrictions.lockedNodeIds); locked ? values.add(nodeId) : values.delete(nodeId); next.restrictions.lockedNodeIds = [...values].sort();
+  next.history.push(historyEvent(next, 'human', locked ? 'locked_node' : 'unlocked_node', `${locked ? 'Locked' : 'Unlocked'} ${nodeId} for agent/optimizer modification`, now, nodeId));
+  return invalidatePlan(next, now, 'Verification invalidated because plan restrictions changed.');
+}
+
+export function setChangePlanStatus(plan: ChangePlan, status: ChangePlanStatus, summary: string, now = new Date().toISOString()): ChangePlan {
+  const next = cloneChangePlan(plan); next.status = status; next.updatedAt = now; next.history.push(historyEvent(next, 'system', 'plan_status', summary, now)); return next;
+}
+
+function candidateCommandToPlanChange(command: ModelCommand, candidate: CandidatePlan, index: number, sourcePlanHash: string): PlanChange {
+  const common = { id: `proposal:${candidate.id}:${index + 1}`, actor: 'agent' as const, createdAt: command.createdAt, rationaleEvidenceIds: [...candidate.rationaleEvidenceIds] };
+  if (command.type === 'set_link_capacity') return { ...common, type: 'set_link_capacity', target: { kind: 'link', id: String(command.args.linkId ?? '') }, payload: { capacityGbps: Number(command.args.capacityGbps) } };
+  if (command.type === 'set_link_availability') return { ...common, type: command.args.available === false ? 'disable_link' : 'enable_link', target: { kind: 'link', id: String(command.args.linkId ?? '') }, payload: {} };
+  if (command.type === 'set_demand_bandwidth') return { ...common, type: 'set_demand_bandwidth', target: { kind: 'demand', id: String(command.args.demandId ?? '') }, payload: { bandwidthGbps: Number(command.args.bandwidthGbps) } };
+  if (command.type === 'add_demand') {
+    const demand = command.args.demand as DemandModel | undefined; if (!demand) throw new Error('Candidate add_demand is missing its demand payload.');
+    return { ...common, type: 'add_demand', target: { kind: 'demand', id: demand.id }, payload: { demand: { ...demand } } };
+  }
+  throw new Error(`Candidate command ${command.type} cannot be represented as a Change Plan proposal.`);
+}
+
+export function setCandidateProposals(project: NetworkProject, plan: ChangePlan, candidate: CandidatePlan, now = new Date().toISOString()): ChangePlan {
+  assertPlanBoundToProject(project, plan);
+  if (candidate.baseModelHash !== modelHash(project)) throw new Error('Candidate is stale because the base network changed.');
+  const sourcePlanHash = changePlanHash(plan);
+  const lockedLinks = new Set(plan.restrictions.lockedLinkIds);
+  const lockedNodes = new Set(plan.restrictions.lockedNodeIds);
+  const next = cloneChangePlan(plan);
+  next.proposals = next.proposals.filter((proposal) => proposal.state !== 'pending');
+  const proposalOffset = next.proposals.length;
+  const proposals = candidate.commands.map((command, index): PlanProposal => {
+    const change = candidateCommandToPlanChange(command, candidate, index, sourcePlanHash);
+    if (change.target.kind === 'link' && lockedLinks.has(change.target.id)) throw new Error(`Optimizer candidate violates lock on ${change.target.id}.`);
+    if (change.target.kind === 'node' && lockedNodes.has(change.target.id)) throw new Error(`Optimizer candidate violates lock on ${change.target.id}.`);
+    return { id: `plan-proposal:${candidate.id}:${proposalOffset + index + 1}`, candidateId: candidate.id, sourcePlanHash, change, state: 'pending', createdAt: now };
+  });
+  next.proposals.push(...proposals); next.status = proposals.length ? 'candidate' : next.status; next.updatedAt = now;
+  next.history.push(historyEvent(next, 'agent', 'candidate_proposed', `Optimizer proposed ${proposals.length} change${proposals.length === 1 ? '' : 's'} (${candidate.objective.value} ${candidate.objective.unit ?? ''})`.trim(), now, candidate.id));
+  return next;
+}
+
+export function acceptCandidateChange(plan: ChangePlan, proposalId: string, now = new Date().toISOString()): ChangePlan {
+  const next = cloneChangePlan(plan); const proposal = next.proposals.find((item) => item.id === proposalId && item.state === 'pending');
+  if (!proposal) throw new Error(`Unknown pending proposal ${proposalId}`);
+  if (proposal.sourcePlanHash !== changePlanHash(next)) throw new Error('Optimizer proposal is stale because the Change Plan changed. Re-run candidate generation.');
+  proposal.state = 'accepted'; proposal.decidedAt = now;
+  if (next.changes.some((change) => change.id === proposal.change.id)) throw new Error(`Accepted proposal change ${proposal.change.id} already exists in the plan.`);
+  next.changes.push(JSON.parse(JSON.stringify(proposal.change)) as PlanChange);
+  next.history.push(historyEvent(next, 'human', 'accepted_proposal', `Accepted ${describePlanChange(proposal.change)}`, now, proposal.id));
+  next.history.push(historyEvent(next, 'system', 'verification_invalidated', 'Verification invalidated because an optimizer proposal was accepted.', now, proposal.id));
+  next.status = 'draft'; next.updatedAt = now; return next;
+}
+
+export function rejectCandidateChange(plan: ChangePlan, proposalId: string, now = new Date().toISOString()): ChangePlan {
+  const next = cloneChangePlan(plan); const proposal = next.proposals.find((item) => item.id === proposalId && item.state === 'pending');
+  if (!proposal) throw new Error(`Unknown pending proposal ${proposalId}`);
+  proposal.state = 'rejected'; proposal.decidedAt = now;
+  next.history.push(historyEvent(next, 'human', 'rejected_proposal', `Rejected ${describePlanChange(proposal.change)}`, now, proposal.id));
+  next.history.push(historyEvent(next, 'system', 'verification_invalidated', 'Verification invalidated because an optimizer proposal was rejected.', now, proposal.id));
+  next.status = 'draft'; next.updatedAt = now; return next;
+}
+
+export function acceptAllCandidateChanges(plan: ChangePlan, now = new Date().toISOString()): ChangePlan {
+  let next = cloneChangePlan(plan);
+  for (const proposal of next.proposals.filter((item) => item.state === 'pending')) next = acceptCandidateChange(next, proposal.id, now);
+  return next;
+}
+
+export function discardCandidateProposals(plan: ChangePlan, now = new Date().toISOString(), actor: PlanHistoryActor = 'human'): ChangePlan {
+  let next = cloneChangePlan(plan); const pending = next.proposals.filter((item) => item.state === 'pending');
+  for (const proposal of pending) { const row = next.proposals.find((item) => item.id === proposal.id)!; row.state = 'rejected'; row.decidedAt = now; }
+  next.history.push(historyEvent(next, actor, 'discarded_candidate', `Discarded ${pending.length} pending optimizer proposal${pending.length === 1 ? '' : 's'}`, now));
+  if (pending.length) next.history.push(historyEvent(next, 'system', 'verification_invalidated', 'Verification invalidated because the optimizer candidate was discarded.', now));
+  next.status = 'draft'; next.updatedAt = now; return next;
 }
 
 export function applyModelCommand(project: NetworkProject, command: ModelCommand): NetworkProject {

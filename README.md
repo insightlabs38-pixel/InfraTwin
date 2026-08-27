@@ -1,58 +1,90 @@
 # InfraTwin
 
-InfraTwin is a browser-native network decision digital twin for change safety, capacity planning, resilience, and optimization. Human edits, deterministic solvers, evidence overlays, optimizer candidates, and WebMCP agents all operate on the same canonical browser state.
+InfraTwin is a browser-native collaborative network change-planning workbench. It keeps the canonical network separate from a visible, editable **Change Plan**, compiles that plan into the same deterministic solver overlays used by the validated Level 0–3 engine, and lets humans constrain and revise optimizer proposals before relying on verification.
 
-## Current status: Level 3 optimization contender
+> Plan and verify network changes before production.
 
-Levels 0–2 are preserved while Level 3 adds a real browser-local optimization layer:
+## Product model
 
-- pinned **HiGHS 1.15.2 WebAssembly** solver loaded in a dedicated browser Worker;
-- traffic-allocation LP that minimizes maximum link utilization under per-demand flow conservation and link capacities;
-- discrete capacity-upgrade MILP minimizing declared upgrade cost under utilization/headroom, budget, baseline, and selected scenario constraints;
-- explicit solver status/proof, objective, gap when exposed, time limit, runtime, solver/version, model/scenario hashes, and problem hash;
-- time-limited runs never claim optimality unless the solver status proves it;
-- optimizer output is always a `CandidatePlan`, never an implicit mutation;
-- independent deterministic candidate verification that recomputes upgrade cost and replays selected scenarios;
-- verifier disagreement blocks the VERIFIED badge;
-- reversible candidate application with exact model-hash restoration for supported commands;
-- WebMCP optimizer tools (`optimize_capacity_plan`, `optimize_routing`, `verify_candidate`) registered only after the HiGHS worker probes successfully;
-- Level 0/1/2 regression coverage plus Level 3 LP, MILP, infeasibility, status, reversibility, verification, and WebMCP reference tests.
+The primary workflow is now:
 
-Level 2 remains the resilience foundation: deterministic ECMP, bounded worker-parallel N-1, cancellation/progress, stale-result protection, counterexample replay, min-cut evidence, dynamic capability groups, and browser-local safety bounds.
+```text
+BASE NETWORK
+  +
+CHANGE PLAN
+  +
+CONSTRAINTS / RESTRICTIONS
+  ↓
+deterministic analysis
+  ↓
+candidate proposal
+  ↓
+human revision
+  ↓
+verification
+```
 
-## Optimization semantics
+A `NetworkProject` remains the canonical base. Editing a `ChangePlan` never mutates it. `compileChangePlanToScenarioPatch()` deterministically translates planned outages, restorations, capacities, traffic edits, new demands, and growth into the existing solver-compatible `ScenarioPatch`; Level 0–3 routing, capacity, N-1, min-cut, cancellation, worker, and HiGHS logic is reused rather than replaced.
 
-The capacity MILP is intentionally narrow and auditable. It chooses only from each link's declared `upgradeOptions`. For each selected baseline/failure/growth scenario, InfraTwin computes the deterministic routing loads and requires the chosen discrete capacity to keep each active link at or below the requested utilization target. Optional budget constraints are enforced in the same MILP.
+The browser workspace supports:
 
-A missing route is reported as infeasible because capacity-only upgrades cannot repair connectivity. Scenario-level capacity overrides are rejected for optimization so capacity provenance remains unambiguous. A feasible time-limited incumbent may be shown as such, but it is never labeled minimum-cost without an optimal solver status.
+- named Change Plan creation and reset;
+- planned link/node outages and restorations by selecting topology objects;
+- planned link capacity changes;
+- planned existing-demand bandwidth changes;
+- new traffic demands with source, target, bandwidth, service class, and label;
+- generic all-demand or selected-demand growth;
+- target utilization, optional budget, N-1 requirement, and protected-service selections;
+- locked links/nodes as explicit “do not modify” restrictions;
+- constrained HiGHS capacity optimization that omits locked-link upgrade variables and reports lock-driven infeasibility honestly;
+- optimizer changes represented inside the same Change Plan as agent proposals;
+- individual proposal accept/reject, accept-all, and discard;
+- semantic human / optimizer / system history;
+- plan-analysis and candidate-verification staleness tied to semantic base + plan/revision hashes rather than layout.
 
-The independent verifier does not trust the optimizer objective. It reapplies the candidate to the original model, confirms every capacity is a declared discrete option, recomputes cost, checks budget, and reruns all selected scenarios. Only agreement across those checks produces VERIFIED.
+## Template networks
 
-## Routing semantics
+Maintenance Trap, Growth Wall, and Resilience Gap remain bundled regression/onboarding assets, but they are no longer privileged product workflows. Each network can be opened with an empty Change Plan, and the corresponding saved example plan can optionally be loaded through the same plan machinery a human uses manually.
 
-Bundled scenarios use `routingProfile.mode = "ecmp"`.
+- **Maintenance Trap:** the saved plan disables `L1`; a human can reproduce it by selecting `L1` and adding an outage. Planned analysis exposes `L3` at 120%.
+- **Growth Wall:** the saved plan applies +40% growth to `GD1`/`GD2`; the same generic growth editor reproduces `G2` at 84% and the existing first-failure behavior.
+- **Resilience Gap:** the saved failure-replay plan disables `R2`; manual authoring produces the same southern `R4`/`R5` constraint. Independent N-1 enumeration remains available from the base or any current plan.
 
-For each demand, InfraTwin finds the shortest path cost by positive link weight and splits the demand equally across every equal-cost shortest path. Aggregate link load is the sum of each demand's fractional flow. The implementation exposes both a stable representative path and the complete per-link flow fractions used for deterministic capacity/resilience analysis.
+## Solver and provenance guarantees
 
-`single-shortest-path` remains supported for Level 0 compatibility. ECMP projects require strictly positive weights so the equal-cost shortest-path graph remains acyclic and deterministic.
+The Level 0–3 computational core remains intact:
 
-The separate Level 3 traffic-allocation LP is an optimization reference: it may split commodity flow across any capacity-feasible topology path to minimize maximum utilization. It does not mutate the canonical routing profile.
+- deterministic single-shortest-path and ECMP routing;
+- exact ECMP path-count reporting with bounded materialization;
+- utilization/service evidence and route witnesses;
+- deterministic growth and min-cut analysis;
+- bounded worker-parallel N-1 with cancellation/progress/stale-result protection;
+- browser-local HiGHS 1.15.2 traffic-allocation LP and discrete capacity-upgrade MILP;
+- solver status/proof/objective/time-limit diagnostics;
+- independent candidate verification;
+- semantic SHA-256 model identity that ignores presentation layout while preserving engineering semantics;
+- adversarial hardening for hostile metadata, threshold precision, unavailable-node LP routing, and canonical resource validation.
 
-## Bundled demos
+ChangePlan adds two identities:
 
-### Maintenance Trap
+- **plan hash:** effective changes + constraints + restrictions; this governs deterministic plan evidence freshness;
+- **revision hash:** plan hash + proposal states; this additionally governs candidate-verification freshness.
 
-Baseline PASS. Simulating CHI–DAL maintenance reroutes gold traffic across DEN–ATL and pushes `L3` to 120%. A capacity candidate raises `L3` to 15 Gbps and restores the modeled target.
+Plan name, timestamps, status, history, and UI layout are not solver semantics.
 
-### Growth Wall
+## Constraint semantics
 
-Baseline east–west core is 60%. +40% growth pushes `G2` to 84%; first modeled service-target failure appears at 1.35×. The Level 3 MILP proves the minimum-cost declared plan is `G2` → 22 Gbps at cost 6 for an 80% utilization target.
+`targetUtilizationPct` is enforced by Change Plan analysis and passed into the capacity optimizer. `budgetCostUnits` is passed to the MILP when present. `requireN1` causes plan analysis to enumerate bounded single-link failures and those completed contingency scenarios are included in direct UI optimizer/verification requirements. Locked links are omitted from upgrade variables and verified independently.
 
-### Resilience Gap
+Protected service-class IDs are first-class plan data and are used to identify violations affecting protected traffic. Phase 3.5A does **not** invent a new solver guarantee beyond the service-class routing/utilization semantics already modeled by Level 0–3.
 
-Bounded N-1 ranks `R2` as the worst link failure. Counterexample replay reroutes premium traffic onto `R4`/`R5`, both reaching 110%. The Level 3 MILP can optimize that selected failure and proves `R4`/`R5` → 14 Gbps at total cost 8 for an 80% target; the independent checker then replays the failure before VERIFIED is shown.
+## WebMCP scope
 
-## Run
+The existing WebMCP capability surface is preserved rather than redesigned in Phase 3.5A. Existing tools continue to use shared application services. Internal Change Plan services and lock state are available to the application layer, and existing candidate generation/optimization respects current locked links.
+
+This phase does **not** claim complete WebMCP Change Plan coactivity; broader semantic tool design and product-specific WebMCP evaluation are intentionally deferred to Phase 3.5D.
+
+## Run and verify
 
 Requires Node.js 22+.
 
@@ -61,85 +93,28 @@ npm ci
 npm test
 npm run typecheck
 npm run build
-npm run dev
-```
-
-The web `dev` and `build` scripts copy `node_modules/highs/build/highs.wasm` into the app's public solver assets before Next.js starts. Open `http://localhost:3000`.
-
-Benchmarks:
-
-```bash
+npm run test:e2e
 npm run benchmark:level2
 npm run benchmark:level3
 ```
 
-## WebMCP capability states
-
-InfraTwin feature-detects `document.modelContext` and registers semantic engineering tools against public application services, never DOM automation.
-
-Always-on core tools for a valid project: `inspect_network`, `inspect_demands`, `simulate_change`, `run_capacity_analysis`, `propose_change`.
-
-When N-1 is available: `run_contingencies`.
-
-When current evidence is FAIL: `inspect_violation`, `show_counterexample`, `find_bottlenecks`.
-
-When the HiGHS Worker is ready: `optimize_capacity_plan`, `optimize_routing`, `verify_candidate`.
-
-When a candidate exists: `compare_candidate`, `apply_candidate`, `discard_candidate`.
-
-Each capability group has its own registration-scoped `AbortController`; leaving the corresponding state revokes that group cleanly. Long resilience and optimizer work propagates cancellation to the browser execution boundary. Cancellation is surfaced as cancellation, never PASS or OPTIMAL.
-
-## Evidence contracts
-
-Resilience results retain deterministic ranking, model/scenario hashes, assumptions, violations, witnesses, worker mode/count, progress status, and runtime. The N-1 ranking heuristic remains:
-
-```text
-1000 * criticalUnsatisfiedGbps
-+ 100 * totalUnsatisfiedGbps
-+ 10 * severeOverloadGbps
-+ maxUtilizationPercent
-```
-
-Optimizer evidence adds:
-
-```text
-solver / solverVersion
-status / proof
-objectiveValue / mipGap
-timedOut / timeLimitMs / runtimeMs
-modelHash / scenarioHashes / problemHash
-selected upgrades
-candidate plan
-independent verification status + disagreement reasons
-```
-
-The N-1 score is a demo planning heuristic, not a universal reliability metric.
+`npm run test:e2e` exercises real browser plan authoring, proposal collaboration, cancellation/staleness, existing WebMCP lifecycle behavior, HiGHS WASM loading, import/export, and responsive-layout smoke checks.
 
 ## Repository layout
 
 ```text
-apps/web                 Next.js workbench + contingency/optimizer Web Workers
-packages/model           canonical model, validation, reversible scenario/candidate semantics
-packages/graph-engine    shortest path, ECMP, utilization, components, min-cut
-packages/evidence        capacity/growth/N-1 orchestration, cancellation, evidence
-packages/optimizer       HiGHS LP/MILP formulation, diagnostics, candidate verification
-packages/webmcp          state-derived semantic tool registration + activity telemetry
-packages/scenarios       Maintenance Trap, Growth Wall, Resilience Gap, blank project
-scripts                  build/dev preparation for local WASM solver asset
+apps/web/components      collaborative plan UI, topology, evidence, proposal/history components
+apps/web/workers         contingency and optimizer Web Workers
+packages/model           canonical project + ChangePlan/ScenarioPatch/CandidatePlan semantics and hashing
+packages/graph-engine    deterministic routing, ECMP, utilization, components, min-cut
+packages/evidence        capacity/change-plan/growth/N-1 orchestration and evidence
+packages/optimizer       HiGHS LP/MILP formulation, lock constraints, diagnostics, independent verification
+packages/webmcp          preserved state-derived WebMCP tool surface over shared services
+packages/scenarios       network templates + optional saved Change Plan templates
 benchmarks               reproducible Level 2 and Level 3 benchmarks
-tests                    Level 0–3 reference and regression evaluations
-planning                 governing planning pack + implementation status/benchmark records
+ tests                    Level 0–3, adversarial, and ChangePlan semantic regressions
+ e2e                      Chromium product and WebMCP lifecycle coverage
+planning                 architecture/status records
 ```
 
-See `planning/README.md`, `planning/LEVEL2_IMPLEMENTATION_STATUS.md`, and `planning/LEVEL3_IMPLEMENTATION_STATUS.md` for gate mapping and planning precedence.
-
-
-## Level 3 hardening
-
-The current Level 0–3 product is frozen for a reliability and judge-facing product-quality pass before any Level 4 work. The workbench now separates the primary engineering journey from advanced protocol/solver diagnostics, routes human semantic edits through validated `ModelCommand` application, and uses a semantic SHA-256 model identity that excludes layout-only node coordinates and presentation metadata.
-
-WebMCP analysis contracts are state-honest: `simulate_change` is read-only, N-1 ranking does not silently replay a failure, and `show_counterexample` is only registered when a valid ranking exists. Model-derived tool output is marked as untrusted content where imported/user-controlled labels may be present.
-
-Browser regression coverage is available with `npm run test:e2e` and covers the bundled Maintenance Trap, Growth Wall, and Resilience Gap workflows plus cancellation, reset/switch stale-result protection, import/export, HiGHS worker loading, and responsive-layout smoke checks.
-
-See `planning/LEVEL3_HARDENING_STATUS.md` for the exact hardening scope and remaining limitations. The next stage after this gate is a dedicated adversarial/fuzz/evaluation pass; this hardening pass does not claim that adversarial testing is complete.
+See `planning/LEVEL3_5A_CHANGE_PLAN_STATUS.md` for the exact Phase 3.5A schema, compilation/staleness contracts, test mapping, known limitations, and explicitly deferred Phase 3.5B/C/D work.

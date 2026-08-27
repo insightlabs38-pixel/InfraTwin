@@ -1,5 +1,5 @@
-import type { CandidatePlan, NetworkProject, ScenarioPatch } from '../../model/src/index.ts';
-import { applyCandidatePlan, applyScenario, modelHash, scenarioHash } from '../../model/src/index.ts';
+import type { CandidatePlan, ChangePlan, NetworkProject, PlanEvidenceStamp, ScenarioPatch } from '../../model/src/index.ts';
+import { applyCandidatePlan, applyScenario, changePlanEvidenceStamp, compileChangePlanToScenarioPatch, isPlanEvidenceFresh, modelHash, scenarioHash } from '../../model/src/index.ts';
 import { minCut, routeProject, type CutResult, type RoutingResult } from '../../graph-engine/src/index.ts';
 
 export type Verdict = 'PASS' | 'FAIL' | 'OPTIMAL' | 'FEASIBLE' | 'INFEASIBLE' | 'CANCELLED' | 'ERROR';
@@ -52,6 +52,19 @@ export interface GrowthAnalysis {
   baseline: CapacityAnalysis;
   target: CapacityAnalysis;
   result: AnalysisResult;
+}
+
+export interface ChangePlanAnalysis {
+  stamp: PlanEvidenceStamp;
+  planHash: string;
+  patch: ScenarioPatch;
+  capacity: CapacityAnalysis;
+  verdict: 'PASS' | 'FAIL';
+  targetUtilizationPct: number;
+  targetUtilizationSatisfied: boolean;
+  protectedServiceClassIds: string[];
+  protectedViolationIds: string[];
+  reasons: string[];
 }
 
 export interface ContingencyCase {
@@ -253,6 +266,42 @@ function analyzeSnapshot(baseProject: NetworkProject, snapshot: NetworkProject, 
 export function runCapacityAnalysis(project: NetworkProject): CapacityAnalysis { return analyzeSnapshot(project, project, 'baseline'); }
 export function runScenarioCapacityAnalysis(project: NetworkProject, patch?: ScenarioPatch | null): CapacityAnalysis {
   return patch ? analyzeSnapshot(project, applyScenario(project, patch), scenarioHash(patch)) : runCapacityAnalysis(project);
+}
+
+export function analyzeChangePlan(project: NetworkProject, plan: ChangePlan): ChangePlanAnalysis {
+  const patch = compileChangePlanToScenarioPatch(project, plan);
+  const capacity = runScenarioCapacityAnalysis(project, patch);
+  const target = plan.constraints.targetUtilizationPct;
+  const peak = capacity.routing.peakUtilizationPct;
+  const targetUtilizationSatisfied = peak <= target + 1e-9;
+  const protectedClasses = new Set(plan.constraints.protectedServiceClassIds);
+  const protectedViolationIds = capacity.result.violations.filter((violation) => {
+    if (!violation.demandId) return false;
+    const demand = capacity.snapshot.demands.find((item) => item.id === violation.demandId);
+    return Boolean(demand && protectedClasses.has(demand.serviceClassId));
+  }).map((violation) => violation.id).sort();
+  const reasons: string[] = [];
+  if (capacity.result.verdict === 'FAIL') reasons.push(`${capacity.result.violations.length} deterministic routing/capacity violation${capacity.result.violations.length === 1 ? '' : 's'}.`);
+  if (!targetUtilizationSatisfied) reasons.push(`Peak utilization ${round(peak)}% exceeds the Change Plan target of ${round(target)}%.`);
+  if (protectedViolationIds.length) reasons.push(`${protectedViolationIds.length} violation${protectedViolationIds.length === 1 ? '' : 's'} affect protected service classes.`);
+  if (!reasons.length) reasons.push(`Planned state satisfies deterministic routing/capacity checks and the ${round(target)}% utilization target.`);
+  const stamp = changePlanEvidenceStamp(project, plan);
+  return {
+    stamp,
+    planHash: stamp.planHash,
+    patch,
+    capacity,
+    verdict: capacity.result.verdict === 'PASS' && targetUtilizationSatisfied ? 'PASS' : 'FAIL',
+    targetUtilizationPct: target,
+    targetUtilizationSatisfied,
+    protectedServiceClassIds: [...protectedClasses].sort(),
+    protectedViolationIds,
+    reasons,
+  };
+}
+
+export function assertChangePlanAnalysisFresh(analysis: ChangePlanAnalysis, project: NetworkProject, plan: ChangePlan): void {
+  if (!isPlanEvidenceFresh(analysis.stamp, project, plan)) throw new Error('Change Plan analysis is stale because the base network or plan semantics changed.');
 }
 
 export function runGrowthAnalysis(project: NetworkProject, demandIds: string[], targetMultiplier: number, step = 0.05): GrowthAnalysis {
@@ -555,8 +604,9 @@ function targetUtilizationForLink(analysis: CapacityAnalysis, linkId: string, fa
   return target;
 }
 
-export function proposeCapacityMitigation(project: NetworkProject, patch?: ScenarioPatch | null, targetHeadroomPct = 20): CandidatePlan | null {
+export function proposeCapacityMitigation(project: NetworkProject, patch?: ScenarioPatch | null, targetHeadroomPct = 20, lockedLinkIds: readonly string[] = []): CandidatePlan | null {
   const analysis = runScenarioCapacityAnalysis(project, patch);
+  const locked = new Set(lockedLinkIds);
   const violatingLinkIds = [...new Set(analysis.result.violations.map((violation) => violation.linkId).filter((id): id is string => Boolean(id)))].sort();
   if (!violatingLinkIds.length) return null;
   const commands: CandidatePlan['commands'] = [];
@@ -572,6 +622,7 @@ export function proposeCapacityMitigation(project: NetworkProject, patch?: Scena
     const targetUtilizationPct = targetUtilizationForLink(analysis, linkId, targetHeadroomPct);
     const requiredCapacity = load / (targetUtilizationPct / 100);
     if (requiredCapacity <= snapshotLink.capacityGbps + 1e-9) continue;
+    if (locked.has(linkId)) return null;
     const upgrade = [...(link.upgradeOptions ?? [])]
       .filter((option) => option.capacityGbps + 1e-9 >= requiredCapacity)
       .sort((a, b) => a.cost - b.cost || a.capacityGbps - b.capacityGbps)[0];
