@@ -9,6 +9,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase35c-source-snapshot
+          path: |
+            .github
+            apps
+            benchmarks
+            e2e
+            packages
+            planning
+            scripts
+            tests
+            package.json
+            package-lock.json
+            playwright.config.ts
+            tsconfig.json
+          retention-days: 1
       - uses: actions/setup-node@v4
         with:
           node-version: 22
