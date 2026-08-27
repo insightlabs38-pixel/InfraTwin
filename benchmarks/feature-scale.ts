@@ -4,7 +4,7 @@ import process from 'node:process';
 import { performance } from 'node:perf_hooks';
 import { createChangePlan, compileChangePlanToScenarioPatch, type ScenarioPatch } from '../packages/model/src/index.ts';
 import { runCapacityAnalysis, runLinkContingencies } from '../packages/evidence/src/index.ts';
-import { maxFlowMinCut } from '../packages/graph-engine/src/index.ts';
+import { minCut } from '../packages/graph-engine/src/index.ts';
 import {
   buildCapacityUpgradeMILP,
   buildTrafficAllocationLP,
@@ -86,8 +86,8 @@ const capacityAnalysis = runCapacityAnalysis(tierC);
 measurements.push({ fixture: 'Tier C concentrated-source', counts: cCounts, operation: 'capacity-analysis', runtimeMs: performance.now() - capacityStartedAt, success: Boolean(capacityAnalysis.result.verdict) });
 const representativeDemand = tierC.demands[0];
 const minCutStartedAt = performance.now();
-const minCut = maxFlowMinCut(tierC, representativeDemand.source, representativeDemand.target);
-measurements.push({ fixture: 'Tier C concentrated-source', counts: cCounts, operation: 'min-cut-max-flow', runtimeMs: performance.now() - minCutStartedAt, success: Number.isFinite(minCut.maxFlowGbps) });
+const cut = minCut(tierC, representativeDemand.source, representativeDemand.target);
+measurements.push({ fixture: 'Tier C concentrated-source', counts: cCounts, operation: 'min-cut-max-flow', runtimeMs: performance.now() - minCutStartedAt, success: Number.isFinite(cut.maxFlowGbps) });
 
 for (const scenarioCount of [50, 100, 500]) {
   const startedAt = performance.now();
