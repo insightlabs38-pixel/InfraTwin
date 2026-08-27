@@ -24,25 +24,48 @@ jobs:
           test "$(find .github/phase35b_bundle -maxdepth 1 -type f -name 'part*' | wc -l)" -eq 7
           python - <<'PY'
           from pathlib import Path
-          import base64, re
+          import base64, gzip, hashlib, io, tarfile
+
+          EXPECTED_PART05_SHA256 = '43f3cd43124f3e3e8f40e1038bf94daf7118d26c50cb22c7c428bdcd639056df'
+          EXPECTED_B64_SHA256 = '2dd5358b427500d876e96c7c93a52293f7ba33029954f5bf0332e65cb18e7a2e'
+          EXPECTED_ARCHIVE_SHA256 = '3672c319fcb6cfa97da1b7ad7ed4f7f75cc9d122678ef2065340d6b165e1834c'
+
+          def sha(data: bytes) -> str:
+              return hashlib.sha256(data).hexdigest()
+
           parts = [Path(f'.github/phase35b_bundle/part{i:02d}').read_bytes() for i in range(7)]
-          raw = b''.join(parts)
-          clean = re.sub(rb'[^A-Za-z0-9+/=]', b'', raw)
-          print(f'phase35b bundle bytes: raw={len(raw)} clean={len(clean)} removed={len(raw)-len(clean)} remainder={len(clean)%4}')
-          if len(clean) % 4 == 1:
-              raise SystemExit('base64 payload has impossible length (mod 4 == 1); encoded data is missing or has an extra alphabet character')
-          clean += b'=' * ((-len(clean)) % 4)
-          try:
-              decoded = base64.b64decode(clean, validate=True)
-          except Exception as exc:
-              raise SystemExit(f'base64 validation failed: {exc}')
+          if sha(parts[5]) != EXPECTED_PART05_SHA256:
+              if len(parts[5]) != 6580:
+                  raise SystemExit(f'part05 checksum mismatch with unexpected length {len(parts[5])}')
+              repaired = None
+              repaired_at = None
+              for index in range(len(parts[5])):
+                  candidate = parts[5][:index] + parts[5][index + 1:]
+                  if sha(candidate) == EXPECTED_PART05_SHA256:
+                      repaired = candidate
+                      repaired_at = index
+                      break
+              if repaired is None:
+                  raise SystemExit('part05 differs from the authoritative bundle by more than the known one-character staging defect')
+              parts[5] = repaired
+              print(f'repaired known part05 staging defect at encoded offset {repaired_at}')
+
+          payload = b''.join(parts)
+          if sha(payload) != EXPECTED_B64_SHA256:
+              raise SystemExit(f'full base64 checksum mismatch: {sha(payload)}')
+          decoded = base64.b64decode(payload, validate=True)
+          if sha(decoded) != EXPECTED_ARCHIVE_SHA256:
+              raise SystemExit(f'archive checksum mismatch: {sha(decoded)}')
+          gzip.decompress(decoded)
+          with tarfile.open(fileobj=io.BytesIO(decoded), mode='r:gz') as archive:
+              names = archive.getnames()
+          if 'apply_phase35b.py' not in names:
+              raise SystemExit('bundle does not contain apply_phase35b.py')
           Path('/tmp/phase35b.tar.gz').write_bytes(decoded)
-          print(f'phase35b archive bytes: {len(decoded)}')
+          print(f'phase35b bundle verified: {len(payload)} base64 bytes -> {len(decoded)} archive bytes')
           PY
-          gzip -t /tmp/phase35b.tar.gz
           rm -rf /tmp/phase35b && mkdir -p /tmp/phase35b
           tar -xzf /tmp/phase35b.tar.gz -C /tmp/phase35b
-          test -f /tmp/phase35b/apply_phase35b.py
           (cd /tmp/phase35b && python apply_phase35b.py)
       - uses: actions/setup-node@v4
         with:
