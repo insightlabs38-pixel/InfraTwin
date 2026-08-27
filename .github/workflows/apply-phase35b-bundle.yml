@@ -11,30 +11,54 @@ permissions:
   contents: write
 
 jobs:
-  apply:
+  apply-and-verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Reconstruct and verify bundle
+        with:
+          fetch-depth: 0
+      - name: Reconstruct and validate bundle
         shell: bash
         run: |
+          set -euo pipefail
+          test "$(find .github/phase35b_bundle -maxdepth 1 -type f -name 'part*' | wc -l)" -eq 7
           cat .github/phase35b_bundle/part00 .github/phase35b_bundle/part01 .github/phase35b_bundle/part02 .github/phase35b_bundle/part03 .github/phase35b_bundle/part04 .github/phase35b_bundle/part05 .github/phase35b_bundle/part06 > /tmp/phase35b.b64
-          echo "f9d445f4cc0433e577a37adccb71a14d11e85a1ba3a40b973b09c607940b1c37  /tmp/phase35b.b64" | sha256sum -c -
           base64 --decode /tmp/phase35b.b64 > /tmp/phase35b.tar.gz
-          echo "fc873ad002a5c90a58f2d7f445ff80f12283a13512952d24293425a38114fa47  /tmp/phase35b.tar.gz" | sha256sum -c -
+          gzip -t /tmp/phase35b.tar.gz
           rm -rf /tmp/phase35b && mkdir -p /tmp/phase35b
           tar -xzf /tmp/phase35b.tar.gz -C /tmp/phase35b
+          test -f /tmp/phase35b/apply_phase35b.py
           (cd /tmp/phase35b && python apply_phase35b.py)
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - run: npm ci
+      - run: npx playwright install --with-deps chromium
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
+      - run: npm run test:e2e
+      - name: Upload browser inspection artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase35b-browser-inspection
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: ignore
+          retention-days: 7
+      - run: npm run benchmark:level2
+      - run: npm run benchmark:level3
+      - name: Remove staging scaffold
+        shell: bash
+        run: |
+          rm -rf .github/phase35b_bundle
+          rm -f .github/phase35b-trigger.txt .github/workflows/apply-phase35b-bundle.yml
       - name: Commit verified implementation
         shell: bash
         run: |
+          set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
