@@ -67,7 +67,7 @@ test('Phase 3.5C reproducible Chromium scale benchmark', async ({ page, browserN
   });
   const n1StartedAt = performance.now();
   await page.getByTestId('run-resilience').click();
-  await expect(page.getByTestId('resilience-status')).toContainText(/^partial ·/i, { timeout: 45_000 });
+  await expect(page.getByTestId('resilience-status')).toContainText(/partial · 50\/50 · 100%/i, { timeout: 45_000 });
   measurements.push({ fixture: 'National Backbone Scale Test', counts: nationalCounts, routingMode: 'single-shortest-path', operation: 'n1-recommended-bounded-browser-worker-pool', runtimeMs: performance.now() - n1StartedAt, execution: 'worker-pool', success: true, scenarioCount: 50 });
 
   const workerProject = generateScaleProject({ id: 'C', name: 'chromium-worker-probe', ...nationalCounts, seed: 3599, routingMode: 'ecmp', workload: 'unique-sources', sourceConcentration: 500, upgradeOptionDensity: 0.25 });
