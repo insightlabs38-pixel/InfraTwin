@@ -22,8 +22,8 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           PARTS=(planning/.phase35c5-ux.part-*)
-          if (( ${#PARTS[@]} == 0 )); then
-            echo "No staged Phase 3.5C.5 patch parts present."
+          if (( ${#PARTS[@]} != 9 )); then
+            echo "Phase 3.5C.5 patch staging incomplete: ${#PARTS[@]}/9 parts present."
             exit 0
           fi
           cat "${PARTS[@]}" | base64 -d | gzip -d > /tmp/phase35c5.patch
