@@ -2,10 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react';
-import type { LinkModel, LinkUpgradeOption, NetworkProject } from '@infratwin/model';
+import type { LinkModel, NetworkProject } from '@infratwin/model';
 import type { CapacityAnalysis } from '@infratwin/evidence';
 import { computeDeterministicLayout, layoutBounds, layoutCacheKey, searchTopology, topologyRegions, type TopologyDisplayMode } from '../lib/topology-workspace';
-import { UpgradeProfileEditor } from './upgrade-profile-editor';
 
 interface TopologyCanvasProps {
   project: NetworkProject;
@@ -28,7 +27,6 @@ interface TopologyCanvasProps {
   onSelectDemand?: (demandId: string) => void;
   onBatchPlannedOutage?: (linkIds: string[]) => void;
   onBatchLockLinks?: (linkIds: string[], locked: boolean) => void;
-  onApplyUpgradeProfile?: (linkIds: string[], options: LinkUpgradeOption[]) => void;
 }
 
 interface ViewBoxState { x: number; y: number; width: number; height: number }
@@ -94,8 +92,6 @@ export function TopologyCanvas(props: TopologyCanvasProps) {
   const routeByDemand = useMemo(() => new Map(analysis.routing.routes.map((route) => [route.demandId, route])), [analysis.routing.routes]);
   const searchResults = useMemo(() => searchTopology(project, query), [project, query]);
   const selectedDemand = props.selectedDemandId ? project.demands.find((demand) => demand.id === props.selectedDemandId) : undefined;
-  const selectedLink = props.selectedLinkId ? canonicalLinkById.get(props.selectedLinkId) : undefined;
-  const selectedNode = props.selectedNodeId ? canonicalNodeById.get(props.selectedNodeId) : undefined;
 
   const fitNetwork = () => setViewBox(paddedView(layoutBounds(layout), 90));
   useEffect(() => { fitNetwork(); }, [layoutKey]);
@@ -186,11 +182,6 @@ export function TopologyCanvas(props: TopologyCanvasProps) {
     props.onSelectLink(linkId);
     setSearchHighlight(null);
   };
-
-  const selectedCatalogLinks = useMemo(() => {
-    const ids = multiLinkIds.size ? [...multiLinkIds] : props.selectedLinkId ? [props.selectedLinkId] : [];
-    return ids.map((id) => canonicalLinkById.get(id)).filter((link): link is LinkModel => Boolean(link));
-  }, [multiLinkIds, props.selectedLinkId, canonicalLinkById]);
 
   const eventPoint = (clientX: number, clientY: number, element: Element) => {
     const rect = element.getBoundingClientRect();
@@ -324,7 +315,7 @@ export function TopologyCanvas(props: TopologyCanvasProps) {
     context.restore();
   });
 
-  if (snapshot.nodes.length === 0) return <div className="empty-canvas" data-testid="topology-empty"><strong>Blank project</strong><p>Import canonical JSON or a CSV bundle to populate the engineering workspace.</p></div>;
+  if (snapshot.nodes.length === 0) return <div className="empty-canvas" data-testid="topology-empty"><strong>No network loaded.</strong><p>Import JSON or CSV, or open an example network.</p></div>;
 
   return (
     <div className="topology-workspace" data-testid="topology-workspace">
@@ -406,11 +397,12 @@ export function TopologyCanvas(props: TopologyCanvasProps) {
                   props.violationLinkIds.has(link.id) ? 'violation-link' : '', selected ? 'selected' : '', dimmed ? 'dimmed' : '',
                 ].filter(Boolean).join(' ');
                 const showLabel = lod === 'in' ? (priority || project.links.length <= 80) : lod === 'medium' ? priority : priority && (selected || props.violationLinkIds.has(link.id) || props.plannedChangedLinkIds.has(link.id));
+                const linkDx = target.x - source.x; const linkDy = target.y - source.y; const linkLength = Math.hypot(linkDx, linkDy); const linkAngleDeg = Math.atan2(linkDy, linkDx) * 180 / Math.PI;
                 const midpointX = (source.x + target.x) / 2; const midpointY = (source.y + target.y) / 2;
                 return (
-                  <g key={link.id} className="link-group" data-testid={`topology-link-${link.id}`} onClick={(event) => { event.stopPropagation(); selectLink(link.id, event); }}>
+                  <g key={link.id} className="link-group" onClick={(event) => { event.stopPropagation(); selectLink(link.id, event); }}>
                     <line x1={source.x} y1={source.y} x2={target.x} y2={target.y} className={classes} style={{ strokeWidth: clamp(1.4 + utilization / 48 + (priority ? 1.5 : 0), 1.4, 7) }} vectorEffect="non-scaling-stroke" />
-                    <line x1={source.x} y1={source.y} x2={target.x} y2={target.y} className="link-hit-target" vectorEffect="non-scaling-stroke" tabIndex={0} role="button" aria-label={`${link.id}: ${disabled ? 'offline' : `${pct(utilization)} utilized`}. ${selected ? 'Selected.' : ''}`} aria-pressed={selected} onClick={(event) => { event.stopPropagation(); selectLink(link.id, event); }} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectLink(link.id, event); } }} />
+                    <rect x={source.x} y={source.y - 8} width={linkLength} height={16} transform={`rotate(${linkAngleDeg} ${source.x} ${source.y})`} className="link-hit-target" data-testid={`topology-link-${link.id}`} tabIndex={0} role="button" aria-label={`${link.id}: ${disabled ? 'offline' : `${pct(utilization)} utilized`}. ${selected ? 'Selected.' : ''}`} aria-pressed={selected} onClick={(event) => { event.stopPropagation(); selectLink(link.id, event); }} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectLink(link.id, event); } }} />
                     {showLabel && <text x={midpointX} y={midpointY - 8} className={`link-label ${priority ? 'priority-label' : 'normal-context'}`}>{link.id}{lod === 'in' ? ` · ${disabled ? 'OFF' : `${pct(utilization)} · ${link.capacityGbps}G`}` : ''}{props.lockedLinkIds.has(link.id) ? ' · LOCK' : ''}</text>}
                     {props.plannedOutageLinkIds.has(link.id) && <text x={midpointX} y={midpointY + 11} className="state-badge">OUTAGE</text>}
                     {props.proposalLinkIds.has(link.id) && <text x={midpointX} y={midpointY + 11} className="state-badge proposal">PROPOSAL</text>}
@@ -438,13 +430,6 @@ export function TopologyCanvas(props: TopologyCanvasProps) {
 
       <div className="topology-legend" aria-label="Graph legend"><span><i className="legend-line normal" />normal</span><span><i className="legend-line planned" />planned change</span><span><i className="legend-line proposal" />proposal / dashed</span><span><i className="legend-line locked" />locked / double outline</span><span><i className="legend-line violation" />violation / ! badge</span><span><i className="legend-line selected" />selected / glow</span></div>
 
-      {(selectedLink || selectedNode || selectedDemand) && <section className="object-inspector" data-testid="object-inspector" aria-live="polite">
-        {selectedLink && <><div className="workspace-subheading"><div><p className="eyebrow">Selected link</p><strong>{selectedLink.id} · {selectedLink.source} ↔ {selectedLink.target}</strong></div><small>{pct(analysis.routing.linkUtilizationPct[selectedLink.id] ?? 0)} utilized</small></div><div className="object-facts"><span>Capacity <strong>{selectedLink.capacityGbps} Gbps</strong></span><span>Load <strong>{gbps(analysis.routing.linkLoadsGbps[selectedLink.id] ?? 0)}</strong></span><span>Weight <strong>{selectedLink.weight}</strong></span><span>State <strong>{props.plannedOutageLinkIds.has(selectedLink.id) ? 'Planned outage' : props.violationLinkIds.has(selectedLink.id) ? 'Violation' : 'Available'}</strong></span></div></>}
-        {selectedNode && <><div className="workspace-subheading"><div><p className="eyebrow">Selected node</p><strong>{selectedNode.name}</strong></div><small>{selectedNode.id}</small></div><div className="object-facts"><span>Region <strong>{selectedNode.region || 'Unspecified'}</strong></span><span>Type <strong>{selectedNode.type || 'Unspecified'}</strong></span><span>State <strong>{props.plannedOutageNodeIds.has(selectedNode.id) ? 'Planned outage' : selectedNode.available === false ? 'Unavailable' : 'Available'}</strong></span></div></>}
-        {selectedDemand && <><div className="workspace-subheading"><div><p className="eyebrow">Selected demand</p><strong>{selectedDemand.name || selectedDemand.id}</strong></div><small>{selectedDemand.id}</small></div><div className="object-facts"><span>Route <strong>{selectedDemand.source} → {selectedDemand.target}</strong></span><span>Bandwidth <strong>{selectedDemand.bandwidthGbps} Gbps</strong></span><span>Class <strong>{selectedDemand.serviceClassId}</strong></span><span>Routed links <strong>{Object.keys(routeByDemand.get(selectedDemand.id)?.linkFractions ?? {}).length}</strong></span></div><p className="muted compact-copy">Use the Change Plan traffic editor to set this demand’s bandwidth or include it in a growth action. The highlighted route is solver-derived.</p></>}
-      </section>}
-
-      {props.onApplyUpgradeProfile && selectedCatalogLinks.length > 0 && <UpgradeProfileEditor links={selectedCatalogLinks} onApply={props.onApplyUpgradeProfile} />}
     </div>
   );
 }

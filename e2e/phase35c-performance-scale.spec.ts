@@ -3,7 +3,7 @@ import { generateScaleProject } from '../packages/scenarios/src/scale-generator.
 
 async function openScaleProof(page: Page) {
   await page.goto('/');
-  await page.getByTestId('scenario-national-backbone-scale-test').click();
+  await page.getByTestId('network-selector').selectOption('national-backbone-scale-test');
   await expect(page.getByTestId('network-scale')).toContainText('500');
   await expect(page.getByTestId('network-scale')).toContainText('1200');
   await expect(page.getByTestId('network-scale')).toContainText('400');
@@ -59,6 +59,8 @@ test('Phase 3.5C 2: Worker-scale baseline analysis stays interactive and publish
   await expect(page.getByTestId('capacity-analysis-status')).toContainText(/COMPLETE.*worker/i, { timeout: 30_000 });
   await expect(page.getByTestId('capacity-analysis-status')).toContainText(/ms measured on this browser run/i);
   await expect(page.getByTestId('plan-analysis-status')).toContainText(/PASS|FAIL/);
+  await page.getByTestId('nav-analysis').click();
+  await page.getByTestId('analysis-tab-violations').click();
   await expect(page.getByTestId('show-more-violations')).toContainText(/200 \/ [0-9,]+ shown/);
 });
 
@@ -70,10 +72,10 @@ test('Phase 3.5C 3: stale Worker result cannot become authoritative after Change
   await expect(page.getByTestId('capacity-analysis-status')).toContainText(/RUNNING.*worker/i, { timeout: 5_000 });
   await page.getByTestId('plan-link-outage-l-00000').click();
   await expect(page.getByTestId('plan-change-list')).toContainText('l-00000');
-  await expect(page.getByTestId('header-verdict')).toHaveText('DRAFT');
-  await expect(page.getByTestId('plan-analysis-status')).toHaveCount(0);
+  await expect(page.getByTestId('verdict')).toHaveText('DRAFT');
+  await expect(page.getByTestId('plan-analysis-status')).toContainText('DRAFT');
   await page.waitForTimeout(750);
-  await expect(page.getByTestId('header-verdict')).toHaveText('DRAFT');
+  await expect(page.getByTestId('verdict')).toHaveText('DRAFT');
 });
 
 test('Phase 3.5C 4: 500-node scale proof reports bounded N-1 as partial coverage', async ({ page }) => {
@@ -89,10 +91,12 @@ test('Phase 3.5C 4: 500-node scale proof reports bounded N-1 as partial coverage
 test('Phase 3.5C 5: routing-LP scale guard is explicit while deterministic analysis remains available', async ({ page }) => {
   await openScaleProof(page);
   await expect(page.getByTestId('compute-profile')).toContainText('NOT RECOMMENDED');
-  await page.getByTestId('advanced-inspector').locator('summary').click();
+  await page.getByTestId('advanced-toggle').click();
+  await expect(page.getByTestId('advanced-drawer')).toBeVisible();
   await expect(page.getByTestId('routing-lp-guidance')).toContainText(/flow variables/i);
   await page.getByTestId('routing-lp-action').click();
   await expect(page.getByTestId('routing-lp-result')).toContainText(/Not recommended at this scale/i, { timeout: 10_000 });
+  await page.getByTestId('advanced-toggle').click();
   await page.getByTestId('analyze-plan').click();
   await expect(page.getByTestId('capacity-analysis-status')).toContainText(/RUNNING.*worker/i, { timeout: 5_000 });
   await expect(page.getByTestId('plan-analysis-status')).toContainText(/PASS|FAIL/, { timeout: 15_000 });
@@ -100,9 +104,13 @@ test('Phase 3.5C 5: routing-LP scale guard is explicit while deterministic analy
 
 test('Phase 3.5C 6: Compute Profile reports live execution mode/runtime rather than a hardcoded benchmark', async ({ page }) => {
   await openScaleProof(page);
+  await page.getByTestId('advanced-toggle').click();
   await expect(page.getByTestId('compute-profile')).toContainText('not run');
+  await page.getByTestId('advanced-toggle').click();
   await page.getByTestId('analyze-plan').click();
   await expect(page.getByTestId('capacity-analysis-status')).toContainText(/COMPLETE/i, { timeout: 15_000 });
+  await page.getByTestId('advanced-toggle').click();
+  await expect(page.getByTestId('advanced-drawer')).toBeVisible();
   const profile = await page.getByTestId('compute-profile').innerText();
   expect(profile).toMatch(/Last execution: (main-thread|worker) · [0-9.]+ ms live/);
   expect(profile).toContain('1200 eligible link failures');

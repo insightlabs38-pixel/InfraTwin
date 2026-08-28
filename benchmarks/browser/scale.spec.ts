@@ -45,7 +45,7 @@ test('Phase 3.5C reproducible Chromium scale benchmark', async ({ page, browserN
   const nationalCounts = { nodes: 500, links: 1200, demands: 400, regions: 12 };
   await timed('National Backbone Scale Test', nationalCounts, 'single-shortest-path', 'initial-topology-render', 'main-thread', async () => {
     await page.goto('/');
-    await page.getByTestId('scenario-national-backbone-scale-test').click();
+    await page.getByTestId('network-selector').selectOption('national-backbone-scale-test');
     await expect(page.getByTestId('topology-workspace')).toBeVisible();
     await expect(page.getByTestId('network-scale')).toContainText('500');
   });

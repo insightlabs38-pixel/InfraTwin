@@ -62,6 +62,8 @@ Do not silently change a higher-precedence decision. Record intentional deviatio
 | `13_DECISIONS_AND_OPEN_QUESTIONS.md` | ADR-lite decision log and unresolved issues |
 | `14_INTERFACE_CONTRACTS.md` | stable internal APIs for parallel implementation |
 | `15_MASTER_BUILD_CHECKLIST.md` | top-level implementation/submission checklist |
+| `LEVEL3_5C_PERFORMANCE_SCALE_STATUS.md` | Phase 3.5C measured browser/engine operating envelope |
+| `LEVEL3_5C5_PRODUCT_UX_STATUS.md` | Phase 3.5C.5 product UX and information-architecture acceptance |
 | `schemas/network-model.schema.json` | initial serializable model contract |
 | `examples/scenario_catalog.md` | demo/reference scenarios |
 | `reference/sources.md` | current authoritative references |

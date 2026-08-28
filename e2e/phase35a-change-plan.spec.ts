@@ -6,13 +6,18 @@ async function open(page: import('@playwright/test').Page) {
   await expect(page.getByTestId('change-plan-panel')).toBeVisible();
 }
 
+async function selectNetwork(page: import('@playwright/test').Page, id: string) {
+  await page.getByTestId('network-selector').selectOption(id);
+  await expect(page.getByTestId('network-selector')).toHaveValue(id);
+}
+
 async function waitOptimizer(page: import('@playwright/test').Page) {
   await expect(page.getByTestId('optimizer-status')).toContainText(/ready|HiGHS WASM/i, { timeout: 30_000 });
 }
 
 test('Phase 3.5A: human maintenance plan is non-destructive and reversible in the plan', async ({ page }) => {
   await open(page);
-  await page.getByTestId('scenario-maintenance-trap').click();
+  await selectNetwork(page, 'maintenance-trap');
   const baseHash = await page.getByTestId('base-model-hash').textContent();
   await page.getByTestId('topology-link-L1').click();
   await page.getByTestId('plan-link-outage-L1').click();
@@ -34,7 +39,8 @@ test('Phase 3.5A: human maintenance plan is non-destructive and reversible in th
 
 test('Phase 3.5A: human-created selected-demand growth reproduces Growth Wall without a special runGrowth path', async ({ page }) => {
   await open(page);
-  await page.getByTestId('scenario-growth-wall').click();
+  await selectNetwork(page, 'growth-wall');
+  await page.getByText('Traffic changes', { exact: true }).click();
   await page.getByText('Add demand growth', { exact: true }).click();
   await page.getByTestId('growth-all-demands').uncheck();
   await page.getByTestId('growth-demand-GD1').check();
@@ -50,7 +56,7 @@ test('Phase 3.5A: human-created selected-demand growth reproduces Growth Wall wi
 
 test('Phase 3.5A: human restriction invalidates verified optimizer proposal and locked infeasibility is explicit', async ({ page }) => {
   await open(page);
-  await page.getByTestId('scenario-resilience-gap').click();
+  await selectNetwork(page, 'resilience-gap');
   await page.getByTestId('topology-link-R2').click();
   await page.getByTestId('plan-link-outage-R2').click();
   await page.getByTestId('analyze-plan').click();
@@ -73,8 +79,9 @@ test('Phase 3.5A: human restriction invalidates verified optimizer proposal and 
 
 test('Phase 3.5A: add a new service through UI and keep the base project unchanged', async ({ page }) => {
   await open(page);
-  await page.getByTestId('scenario-growth-wall').click();
+  await selectNetwork(page, 'growth-wall');
   const baseHash = await page.getByTestId('base-model-hash').textContent();
+  await page.getByText('Traffic changes', { exact: true }).click();
   await page.getByText('Add new service demand', { exact: true }).click();
   await page.getByTestId('new-demand-name').fill('Payments replication');
   await page.getByTestId('new-demand-source').selectOption('NYC');
@@ -91,7 +98,7 @@ test('Phase 3.5A: add a new service through UI and keep the base project unchang
 
 test('Phase 3.5A: individual candidate accept/reject is visible, preserves provenance, and invalidates verification', async ({ page }) => {
   await open(page);
-  await page.getByTestId('scenario-resilience-gap').click();
+  await selectNetwork(page, 'resilience-gap');
   await page.getByTestId('topology-link-R2').click();
   await page.getByTestId('plan-link-outage-R2').click();
   await page.getByTestId('analyze-plan').click();
@@ -108,6 +115,7 @@ test('Phase 3.5A: individual candidate accept/reject is visible, preserves prove
   await expect(page.getByTestId('plan-change-list')).toContainText('Set R4 capacity to 14 Gbps');
   await expect(page.getByTestId('plan-change-list')).toContainText('Agent/optimizer proposal accepted by human');
   await expect(page.getByTestId('plan-change-list')).not.toContainText('Set R5 capacity to 14 Gbps');
+  await page.getByTestId('nav-plans').click();
   await expect(page.getByTestId('plan-history')).toContainText('Optimizer proposed 2 changes');
   await expect(page.getByTestId('plan-history')).toContainText('Accepted Set R4 capacity to 14 Gbps');
   await expect(page.getByTestId('plan-history')).toContainText('Rejected Set R5 capacity to 14 Gbps');
