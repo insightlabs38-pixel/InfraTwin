@@ -475,7 +475,15 @@ export function Workbench() {
 
   const renderPlanResultSummary = () => (
     <section data-testid="plan-analysis-status" className={`plan-result-summary result-${authority.toLowerCase()}`} aria-label="Current plan result">
-      <div data-testid="evidence-panel" className="result-evidence"><div><span className="section-kicker">Plan result</span><strong data-testid="verdict">{authority}</strong></div><p>{analysisStatusLabel}</p>{authority === 'FAIL' && primaryFailure && <small>Primary issue: {primaryFailure}</small>}</div>
+      <div data-testid="evidence-panel" className="result-evidence">
+        <div>
+          <span className="section-kicker">{ephemeralPatch ? 'Counterexample replay' : 'Plan result'}</span>
+          <strong data-testid="verdict">{ephemeralPatch ? analysis.result.verdict : authority}</strong>
+        </div>
+        <p>{ephemeralPatch ? `${ephemeralPatch.name} · ${analysis.result.violations.length} modeled violation${analysis.result.violations.length === 1 ? '' : 's'}.` : analysisStatusLabel}</p>
+        {ephemeralPatch && analysis.result.violations.length > 0 && <small>Replay issues: {analysis.result.violations.slice(0, 8).map((item) => item.linkId ?? item.demandId ?? item.code).filter(Boolean).join(', ')}</small>}
+        {!ephemeralPatch && authority === 'FAIL' && primaryFailure && <small>Primary issue: {primaryFailure}</small>}
+      </div>
       {analysisStatus !== 'idle' && <small data-testid="capacity-analysis-status">Analysis {analysisStatus} · {lastAnalysisExecution ?? executionProfile.mode}{lastAnalysisRuntimeMs === null ? '' : ` · ${lastAnalysisRuntimeMs} ms measured on this browser run`}</small>}
       {resilienceStatus !== 'idle' && <small data-testid="resilience-status">N-1 {resilienceStatus} · {progressLabel} · {resilienceMessage}</small>}
       {contingencies && n1Fresh && <small data-testid="resilience-evidence">{contingencies.completedScenarios}/{contingencies.totalEligibleScenarios} failures tested · {contingencies.status.toUpperCase()} · {contingencies.result.metrics.failingScenarios} failing</small>}

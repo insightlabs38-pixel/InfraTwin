@@ -39,7 +39,7 @@ export function ChangePlanPanel(props: Props) {
 
       <section className="compact-section" data-testid="plan-change-list">
         <div className="section-row"><span>Changes</span><strong>{plan.changes.length}</strong></div>
-        {plan.changes.length === 0 ? <p className="muted compact-copy">No planned changes.</p> : <div className="compact-list">{plan.changes.map((item) => <div className={`plan-change-row actor-${item.actor}`} key={item.id}><div><strong>{describePlanChange(item)}</strong><small>{item.actor === 'agent' ? 'Accepted optimizer proposal' : 'Human-authored'}</small></div><button aria-label={`Remove ${item.id}`} data-testid={`remove-plan-change-${item.id}`} onClick={() => props.onRemoveChange(item.id)}>×</button></div>)}</div>}
+        {plan.changes.length === 0 ? <p className="muted compact-copy">No planned changes.</p> : <div className="compact-list">{plan.changes.map((item) => <div className={`plan-change-row actor-${item.actor}`} key={item.id}><div><strong>{describePlanChange(item)}</strong><small>{item.actor === 'agent' ? 'Agent/optimizer proposal accepted by human' : 'Human-authored'}</small></div><button aria-label={`Remove ${item.id}`} data-testid={`remove-plan-change-${item.id}`} onClick={() => props.onRemoveChange(item.id)}>×</button></div>)}</div>}
       </section>
 
       <details className="compact-disclosure" data-testid="plan-constraints">

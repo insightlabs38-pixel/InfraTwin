@@ -140,7 +140,7 @@ select, input { border: 1px solid #334158; border-radius: 7px; background: #0d15
 .advanced-list > div { display: grid; grid-template-columns: 120px minmax(0,1fr); gap: 9px; font-size: 9px; }
 .advanced-list dt { color: #71849c; }
 .advanced-list dd { margin: 0; overflow-wrap: anywhere; }
-.floating-notice { position: fixed; z-index: 95; left: 50%; top: 62px; max-width: min(780px, 90vw); transform: translateX(-50%); border: 1px solid #31527b; border-radius: 8px; background: #10223a; color: #c0d9f5; box-shadow: 0 14px 36px rgba(0,0,0,.35); padding: 8px 11px; font-size: 10px; }
+.floating-notice { position: fixed; z-index: 95; pointer-events: none; left: 50%; top: 62px; max-width: min(780px, 90vw); transform: translateX(-50%); border: 1px solid #31527b; border-radius: 8px; background: #10223a; color: #c0d9f5; box-shadow: 0 14px 36px rgba(0,0,0,.35); padding: 8px 11px; font-size: 10px; }
 
 @media (max-width: 1180px) {
   .appbar { grid-template-columns: 150px auto minmax(170px, 250px) auto; gap: 7px; }

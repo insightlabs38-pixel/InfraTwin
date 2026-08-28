@@ -109,6 +109,8 @@ test('Phase 3.5C 6: Compute Profile reports live execution mode/runtime rather t
   await page.getByTestId('advanced-toggle').click();
   await page.getByTestId('analyze-plan').click();
   await expect(page.getByTestId('capacity-analysis-status')).toContainText(/COMPLETE/i, { timeout: 15_000 });
+  await page.getByTestId('advanced-toggle').click();
+  await expect(page.getByTestId('advanced-drawer')).toBeVisible();
   const profile = await page.getByTestId('compute-profile').innerText();
   expect(profile).toMatch(/Last execution: (main-thread|worker) · [0-9.]+ ms live/);
   expect(profile).toContain('1200 eligible link failures');
