@@ -10,31 +10,43 @@ permissions:
 
 jobs:
   apply:
-    if: ${{ !contains(github.event.head_commit.message, 'apply visible SVG link target fix') }}
+    if: ${{ !contains(github.event.head_commit.message, 'apply geometric SVG link target fix') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Apply visible SVG link target fix
+      - name: Apply geometric SVG link target fix
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
+
           p = Path('apps/web/components/topology-canvas.tsx')
           text = p.read_text()
-          old_visible = '<line x1={source.x} y1={source.y} x2={target.x} y2={target.y} className={classes} style={{ strokeWidth: clamp(1.4 + utilization / 48 + (priority ? 1.5 : 0), 1.4, 7) }} vectorEffect="non-scaling-stroke" />'
-          new_visible = '<line x1={source.x} y1={source.y} x2={target.x} y2={target.y} className={classes} data-testid={`topology-link-${link.id}`} style={{ strokeWidth: clamp(1.4 + utilization / 48 + (priority ? 1.5 : 0), 1.4, 7) }} vectorEffect="non-scaling-stroke" />'
-          old_hit = '<line x1={source.x} y1={source.y} x2={target.x} y2={target.y} className="link-hit-target" data-testid={`topology-link-${link.id}`} vectorEffect="non-scaling-stroke" tabIndex={0} role="button"'
-          new_hit = '<line x1={source.x} y1={source.y} x2={target.x} y2={target.y} className="link-hit-target" vectorEffect="non-scaling-stroke" tabIndex={0} role="button"'
-          if old_visible not in text or old_hit not in text:
-              raise SystemExit('Expected visible/hit link fragments not found')
-          p.write_text(text.replace(old_visible, new_visible, 1).replace(old_hit, new_hit, 1))
+          old_geometry = 'const midpointX = (source.x + target.x) / 2; const midpointY = (source.y + target.y) / 2;'
+          new_geometry = 'const linkDx = target.x - source.x; const linkDy = target.y - source.y; const linkLength = Math.hypot(linkDx, linkDy); const linkAngleDeg = Math.atan2(linkDy, linkDx) * 180 / Math.PI;\n                const midpointX = (source.x + target.x) / 2; const midpointY = (source.y + target.y) / 2;'
+          old_visible = '<line x1={source.x} y1={source.y} x2={target.x} y2={target.y} className={classes} data-testid={`topology-link-${link.id}`} style={{ strokeWidth: clamp(1.4 + utilization / 48 + (priority ? 1.5 : 0), 1.4, 7) }} vectorEffect="non-scaling-stroke" />'
+          new_visible = '<line x1={source.x} y1={source.y} x2={target.x} y2={target.y} className={classes} style={{ strokeWidth: clamp(1.4 + utilization / 48 + (priority ? 1.5 : 0), 1.4, 7) }} vectorEffect="non-scaling-stroke" />'
+          old_hit = '<line x1={source.x} y1={source.y} x2={target.x} y2={target.y} className="link-hit-target" vectorEffect="non-scaling-stroke" tabIndex={0} role="button" aria-label={`${link.id}: ${disabled ? \'offline\' : `${pct(utilization)} utilized`}. ${selected ? \'Selected.\' : \'\'}`} aria-pressed={selected} onClick={(event) => { event.stopPropagation(); selectLink(link.id, event); }} onKeyDown={(event) => { if (event.key === \'Enter\' || event.key === \' \') { event.preventDefault(); selectLink(link.id, event); } }} />'
+          new_hit = '<rect x={source.x} y={source.y - 8} width={linkLength} height={16} transform={`rotate(${linkAngleDeg} ${source.x} ${source.y})`} className="link-hit-target" data-testid={`topology-link-${link.id}`} tabIndex={0} role="button" aria-label={`${link.id}: ${disabled ? \'offline\' : `${pct(utilization)} utilized`}. ${selected ? \'Selected.\' : \'\'}`} aria-pressed={selected} onClick={(event) => { event.stopPropagation(); selectLink(link.id, event); }} onKeyDown={(event) => { if (event.key === \'Enter\' || event.key === \' \') { event.preventDefault(); selectLink(link.id, event); } }} />'
+          if old_geometry not in text or old_visible not in text or old_hit not in text:
+              raise SystemExit('Expected topology link geometry fragments not found')
+          text = text.replace(old_geometry, new_geometry, 1).replace(old_visible, new_visible, 1).replace(old_hit, new_hit, 1)
+          p.write_text(text)
+
+          css = Path('apps/web/app/phase35b.css')
+          css_text = css.read_text()
+          old_css = '.link-hit-target{stroke:transparent;stroke-width:16;cursor:pointer;outline:none}.link-hit-target:focus-visible{stroke:rgba(159,200,255,.18)}'
+          new_css = '.link-hit-target{fill:rgba(255,255,255,.001);stroke:none;cursor:pointer;outline:none}.link-hit-target:focus-visible{fill:rgba(159,200,255,.14)}'
+          if old_css not in css_text:
+              raise SystemExit('Expected link hit target CSS not found')
+          css.write_text(css_text.replace(old_css, new_css, 1))
           PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/web/components/topology-canvas.tsx
+          git add apps/web/components/topology-canvas.tsx apps/web/app/phase35b.css
           git diff --cached --check
-          git commit -m "fix(phase-3.5c.5): apply visible SVG link target fix"
+          git commit -m "fix(phase-3.5c.5): apply geometric SVG link target fix"
           git push origin HEAD:tmp/phase-3-5c5-validation
