@@ -98,6 +98,10 @@ test('Phase 3.5C G: scale/execution estimator is deterministic and sends high-un
   const small = fixture('single-shortest-path');
   assert.deepEqual(estimateRoutingWorkload(small), estimateRoutingWorkload(structuredClone(small)));
   assert.deepEqual(analysisExecutionProfile(small), analysisExecutionProfile(structuredClone(small)));
+  const tierB = generateScaleProject({ id: 'B', name: 'main-thread-threshold', nodes: 250, links: 600, demands: 200, regions: 8, seed: 3551, routingMode: 'single-shortest-path', workload: 'concentrated-sources', sourceConcentration: 15, serviceClassCount: 3, upgradeOptionDensity: 0.1 });
+  assert.equal(analysisExecutionProfile(tierB).mode, 'main-thread');
+  const measuredTierC = generateScaleProject({ id: 'C', name: 'measured-worker-threshold', nodes: 500, links: 1200, demands: 400, regions: 12, seed: 3552, routingMode: 'single-shortest-path', workload: 'concentrated-sources', sourceConcentration: 30, serviceClassCount: 3, upgradeOptionDensity: 0.1 });
+  assert.equal(analysisExecutionProfile(measuredTierC).mode, 'worker');
   const large = generateScaleProject({ id: 'C', name: 'worker-threshold', nodes: 500, links: 1200, demands: 400, regions: 12, seed: 3553, routingMode: 'ecmp', workload: 'unique-sources', serviceClassCount: 3, upgradeOptionDensity: 0.1 });
   assert.equal(analysisExecutionProfile(large).mode, 'worker');
   const largeN1 = n1ExecutionPolicy(large);

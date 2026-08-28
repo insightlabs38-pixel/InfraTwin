@@ -14,6 +14,7 @@ interface PresentationMeasurement {
   success: boolean;
   execution: 'main-thread';
   longestObservedMainThreadTaskMs: number;
+  renderer?: 'svg' | 'canvas';
   message?: string;
 }
 
@@ -31,7 +32,7 @@ async function prepareImport(page: Page, project: ReturnType<typeof generateScal
   await expect(page.getByTestId('import-review')).toContainText(String(project.nodes.length));
 }
 
-test('Phase 3.5C SVG presentation scale benchmark', async ({ page, browserName, browser }) => {
+test('Phase 3.5C adaptive presentation scale benchmark', async ({ page, browserName, browser }) => {
   test.setTimeout(180_000);
   const measurements: PresentationMeasurement[] = [];
   await page.addInitScript(() => {
@@ -55,7 +56,7 @@ test('Phase 3.5C SVG presentation scale benchmark', async ({ page, browserName, 
   for (const tier of SCALE_TIERS.filter((item) => ['A', 'B', 'C'].includes(item.id))) {
     const project = generateScaleProject({ ...tier, seed: 3721 + tier.id.charCodeAt(0), routingMode: 'single-shortest-path', workload: 'concentrated-sources', sourceConcentration: Math.max(8, Math.ceil(tier.nodes * 0.06)), upgradeOptionDensity: 0.3 });
     const counts = { nodes: tier.nodes, links: tier.links, demands: tier.demands, regions: tier.regions };
-    const fixture = `Tier ${tier.id} SVG workspace`;
+    const fixture = `Tier ${tier.id} adaptive workspace`;
     await prepareImport(page, project);
     await measure(fixture, tier.id, counts, 'initial-topology-render', async () => {
       await page.getByTestId('open-imported-network').click();
@@ -63,6 +64,7 @@ test('Phase 3.5C SVG presentation scale benchmark', async ({ page, browserName, 
       await expect(page.getByTestId('network-scale')).toContainText(String(tier.nodes));
       await nextPaint(page);
     });
+    measurements.at(-1)!.renderer = (await page.getByTestId('topology-canvas').getAttribute('data-renderer') ?? 'svg') as 'svg' | 'canvas';
     await measure(fixture, tier.id, counts, 'relayout', async () => { await page.getByTestId('relayout').click(); await nextPaint(page); });
     await measure(fixture, tier.id, counts, 'fit-network', async () => { await page.getByTestId('fit-network').click(); await nextPaint(page); });
     const searchNode = `n-${String(Math.floor(tier.nodes * 0.64)).padStart(4, '0')}`;
@@ -91,7 +93,7 @@ test('Phase 3.5C SVG presentation scale benchmark', async ({ page, browserName, 
 
   const tierD = SCALE_TIERS.find((tier) => tier.id === 'D')!;
   measurements.push({
-    fixture: 'Tier D SVG workspace', tier: 'D', counts: { nodes: tierD.nodes, links: tierD.links, demands: tierD.demands, regions: tierD.regions },
+    fixture: 'Tier D adaptive workspace', tier: 'D', counts: { nodes: tierD.nodes, links: tierD.links, demands: tierD.demands, regions: tierD.regions },
     operation: 'initial-topology-render', runtimeMs: 0, success: false, execution: 'main-thread', longestObservedMainThreadTaskMs: 0,
     message: 'Not feasible through the canonical browser import boundary: Tier D has 750 nodes while the current canonical model limit remains 500 nodes. This is a model-limit boundary, not a measured renderer crash.',
   });
@@ -100,9 +102,9 @@ test('Phase 3.5C SVG presentation scale benchmark', async ({ page, browserName, 
     generatedAt: new Date().toISOString(), browserName, browserVersion: browser.version(),
     userAgent: await page.evaluate(() => navigator.userAgent), viewport: page.viewportSize(),
     platform: process.platform, arch: process.arch, cpuCount: os.cpus().length, cpuModel: os.cpus()[0]?.model ?? 'unknown',
-    totalMemoryBytes: os.totalmem(), commit: process.env.GITHUB_SHA ?? 'local', benchmarkKind: 'phase35c-svg-presentation-scale',
+    totalMemoryBytes: os.totalmem(), commit: process.env.GITHUB_SHA ?? 'local', benchmarkKind: 'phase35c-adaptive-presentation-scale',
   };
   mkdirSync('benchmark-results', { recursive: true });
   writeFileSync('benchmark-results/presentation-scale.json', `${JSON.stringify({ context, measurements }, null, 2)}\n`, 'utf8');
-  console.log(`SVG presentation benchmark: ${measurements.map((row) => `${row.tier}/${row.operation}=${row.success ? `${row.runtimeMs.toFixed(1)}ms` : 'not-feasible'}`).join(' · ')}`);
+  console.log(`Adaptive presentation benchmark: ${measurements.map((row) => `${row.tier}/${row.operation}=${row.success ? `${row.runtimeMs.toFixed(1)}ms` : 'not-feasible'}`).join(' · ')}`);
 });

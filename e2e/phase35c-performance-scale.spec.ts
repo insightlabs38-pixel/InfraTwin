@@ -9,6 +9,7 @@ async function openScaleProof(page: Page) {
   await expect(page.getByTestId('network-scale')).toContainText('400');
   await expect(page.getByTestId('network-scale')).toContainText('12');
   await expect(page.getByTestId('topology-workspace')).toBeVisible();
+  await expect(page.getByTestId('topology-canvas')).toHaveAttribute('data-renderer', 'canvas');
 }
 
 async function importWorkerScale(page: Page) {
@@ -44,6 +45,7 @@ test('Phase 3.5C 1: 500-node scale proof loads and topology navigation remains u
   await expect(page.getByTestId('object-inspector')).toContainText('n-0000');
   await page.getByTestId('fit-selection').click();
   await expect(page.getByTestId('topology-workspace')).toBeVisible();
+  await expect(page.getByTestId('topology-canvas')).toHaveAttribute('data-renderer', 'canvas');
 });
 
 test('Phase 3.5C 2: Worker-scale baseline analysis stays interactive and publishes measured result', async ({ page }) => {
@@ -91,6 +93,7 @@ test('Phase 3.5C 5: routing-LP scale guard is explicit while deterministic analy
   await page.getByTestId('routing-lp-action').click();
   await expect(page.getByTestId('routing-lp-result')).toContainText(/Not recommended at this scale/i, { timeout: 10_000 });
   await page.getByTestId('analyze-plan').click();
+  await expect(page.getByTestId('capacity-analysis-status')).toContainText(/RUNNING.*worker/i, { timeout: 5_000 });
   await expect(page.getByTestId('plan-analysis-status')).toContainText(/PASS|FAIL/, { timeout: 15_000 });
 });
 

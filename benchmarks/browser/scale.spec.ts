@@ -14,6 +14,7 @@ interface BrowserMeasurement {
   longestObservedMainThreadTaskMs?: number;
   optimizationSize?: number;
   scenarioCount?: number;
+  renderer?: 'svg' | 'canvas';
 }
 
 test('Phase 3.5C reproducible Chromium scale benchmark', async ({ page, browserName, browser }) => {
@@ -48,6 +49,7 @@ test('Phase 3.5C reproducible Chromium scale benchmark', async ({ page, browserN
     await expect(page.getByTestId('topology-workspace')).toBeVisible();
     await expect(page.getByTestId('network-scale')).toContainText('500');
   });
+  measurements.at(-1)!.renderer = (await page.getByTestId('topology-canvas').getAttribute('data-renderer') ?? 'svg') as 'svg' | 'canvas';
   await timed('National Backbone Scale Test', nationalCounts, 'single-shortest-path', 'fit-network', 'main-thread', async () => {
     await page.getByTestId('fit-network').click();
   });
@@ -61,9 +63,10 @@ test('Phase 3.5C reproducible Chromium scale benchmark', async ({ page, browserN
     await page.getByTestId('zoom-in').click();
     await expect(page.getByTestId('viewport-readout')).not.toHaveText(before ?? '');
   });
-  await timed('National Backbone Scale Test', nationalCounts, 'single-shortest-path', 'changeplan-analysis', 'main-thread', async () => {
+  await timed('National Backbone Scale Test', nationalCounts, 'single-shortest-path', 'changeplan-analysis', 'worker', async () => {
     await page.getByTestId('analyze-plan').click();
-    await expect(page.getByTestId('capacity-analysis-status')).toContainText(/COMPLETE/i);
+    await expect(page.getByTestId('capacity-analysis-status')).toContainText(/RUNNING.*worker/i, { timeout: 5_000 });
+    await expect(page.getByTestId('capacity-analysis-status')).toContainText(/COMPLETE.*worker/i, { timeout: 15_000 });
   });
   const n1StartedAt = performance.now();
   await page.getByTestId('run-resilience').click();
