@@ -10,31 +10,68 @@ permissions:
 
 jobs:
   apply:
-    if: ${{ !contains(github.event.head_commit.message, 'apply staged Phase 3.5C.5 UX patch') }}
+    if: ${{ !contains(github.event.head_commit.message, 'apply M3.5C.5 remainder fixes') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Apply staged Phase 3.5C.5 patch
+      - name: Apply M3.5C.5 remainder regression fixes
         shell: bash
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          PARTS=(planning/.phase35c5-ux.part-*)
-          if (( ${#PARTS[@]} != 9 )); then
-            echo "Phase 3.5C.5 patch staging incomplete: ${#PARTS[@]}/9 parts present."
-            exit 0
-          fi
-          cat "${PARTS[@]}" | base64 -d | gzip -d > /tmp/phase35c5.patch
-          patch -p1 < /tmp/phase35c5.patch
-          rm -f planning/.phase35c5-ux.gz.b64 "${PARTS[@]}"
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f"Expected source fragment not found in {path}")
+              p.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              'apps/web/components/change-plan-panel.tsx',
+              "item.actor === 'agent' ? 'Accepted optimizer proposal' : 'Human-authored'",
+              "item.actor === 'agent' ? 'Agent/optimizer proposal accepted by human' : 'Human-authored'",
+          )
+
+          replace_once(
+              'apps/web/components/workbench.tsx',
+              '''      <div data-testid="evidence-panel" className="result-evidence"><div><span className="section-kicker">Plan result</span><strong data-testid="verdict">{authority}</strong></div><p>{analysisStatusLabel}</p>{authority === 'FAIL' && primaryFailure && <small>Primary issue: {primaryFailure}</small>}</div>''',
+              '''      <div data-testid="evidence-panel" className="result-evidence">
+        <div>
+          <span className="section-kicker">{ephemeralPatch ? 'Counterexample replay' : 'Plan result'}</span>
+          <strong data-testid="verdict">{ephemeralPatch ? analysis.result.verdict : authority}</strong>
+        </div>
+        <p>{ephemeralPatch ? `${ephemeralPatch.name} · ${analysis.result.violations.length} modeled violation${analysis.result.violations.length === 1 ? '' : 's'}.` : analysisStatusLabel}</p>
+        {ephemeralPatch && analysis.result.violations.length > 0 && <small>Replay issues: {analysis.result.violations.slice(0, 8).map((item) => item.linkId ?? item.demandId ?? item.code).filter(Boolean).join(', ')}</small>}
+        {!ephemeralPatch && authority === 'FAIL' && primaryFailure && <small>Primary issue: {primaryFailure}</small>}
+      </div>''',
+          )
+
+          replace_once(
+              'apps/web/app/phase35b.css',
+              '.topology-pan-surface{fill:transparent}',
+              '.topology-pan-surface{fill:transparent;pointer-events:none}',
+          )
+
+          replace_once(
+              'apps/web/app/phase35c5.css',
+              '.floating-notice { position: fixed; z-index: 95; left:',
+              '.floating-notice { position: fixed; z-index: 95; pointer-events: none; left:',
+          )
+
+          replace_once(
+              'e2e/phase35c-performance-scale.spec.ts',
+              "  await expect(page.getByTestId('capacity-analysis-status')).toContainText(/COMPLETE/i, { timeout: 15_000 });\n  const profile = await page.getByTestId('compute-profile').innerText();",
+              "  await expect(page.getByTestId('capacity-analysis-status')).toContainText(/COMPLETE/i, { timeout: 15_000 });\n  await page.getByTestId('advanced-toggle').click();\n  await expect(page.getByTestId('advanced-drawer')).toBeVisible();\n  const profile = await page.getByTestId('compute-profile').innerText();",
+          )
+          PY
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "Patch produced no changes."
-            exit 0
-          fi
-          git commit -m "test(phase-3.5c.5): apply staged Phase 3.5C.5 UX patch"
+          git add apps/web/components/change-plan-panel.tsx apps/web/components/workbench.tsx apps/web/app/phase35b.css apps/web/app/phase35c5.css e2e/phase35c-performance-scale.spec.ts
+          git diff --cached --check
+          git commit -m "fix(phase-3.5c.5): apply M3.5C.5 remainder fixes"
           git push origin HEAD:tmp/phase-3-5c5-validation
