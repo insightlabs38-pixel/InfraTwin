@@ -22,6 +22,7 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
+          import base64
 
           def replace_once(path, old, new):
               p = Path(path)
@@ -30,45 +31,14 @@ jobs:
                   raise SystemExit(f"Expected source fragment not found in {path}")
               p.write_text(text.replace(old, new, 1))
 
-          replace_once(
-              'apps/web/components/change-plan-panel.tsx',
-              "item.actor === 'agent' ? 'Accepted optimizer proposal' : 'Human-authored'",
-              "item.actor === 'agent' ? 'Agent/optimizer proposal accepted by human' : 'Human-authored'",
-          )
-
-          replace_once(
-              'apps/web/components/workbench.tsx',
-              '''      <div data-testid="evidence-panel" className="result-evidence"><div><span className="section-kicker">Plan result</span><strong data-testid="verdict">{authority}</strong></div><p>{analysisStatusLabel}</p>{authority === 'FAIL' && primaryFailure && <small>Primary issue: {primaryFailure}</small>}</div>''',
-              '''      <div data-testid="evidence-panel" className="result-evidence">
-        <div>
-          <span className="section-kicker">{ephemeralPatch ? 'Counterexample replay' : 'Plan result'}</span>
-          <strong data-testid="verdict">{ephemeralPatch ? analysis.result.verdict : authority}</strong>
-        </div>
-        <p>{ephemeralPatch ? `${ephemeralPatch.name} · ${analysis.result.violations.length} modeled violation${analysis.result.violations.length === 1 ? '' : 's'}.` : analysisStatusLabel}</p>
-        {ephemeralPatch && analysis.result.violations.length > 0 && <small>Replay issues: {analysis.result.violations.slice(0, 8).map((item) => item.linkId ?? item.demandId ?? item.code).filter(Boolean).join(', ')}</small>}
-        {!ephemeralPatch && authority === 'FAIL' && primaryFailure && <small>Primary issue: {primaryFailure}</small>}
-      </div>''',
-          )
-
-          replace_once(
-              'apps/web/app/phase35b.css',
-              '.topology-pan-surface{fill:transparent}',
-              '.topology-pan-surface{fill:transparent;pointer-events:none}',
-          )
-
-          replace_once(
-              'apps/web/app/phase35c5.css',
-              '.floating-notice { position: fixed; z-index: 95; left:',
-              '.floating-notice { position: fixed; z-index: 95; pointer-events: none; left:',
-          )
-
-          replace_once(
-              'e2e/phase35c-performance-scale.spec.ts',
-              "  await expect(page.getByTestId('capacity-analysis-status')).toContainText(/COMPLETE/i, { timeout: 15_000 });\n  const profile = await page.getByTestId('compute-profile').innerText();",
-              "  await expect(page.getByTestId('capacity-analysis-status')).toContainText(/COMPLETE/i, { timeout: 15_000 });\n  await page.getByTestId('advanced-toggle').click();\n  await expect(page.getByTestId('advanced-drawer')).toBeVisible();\n  const profile = await page.getByTestId('compute-profile').innerText();",
-          )
+          replace_once('apps/web/components/change-plan-panel.tsx', "item.actor === 'agent' ? 'Accepted optimizer proposal' : 'Human-authored'", "item.actor === 'agent' ? 'Agent/optimizer proposal accepted by human' : 'Human-authored'")
+          old = base64.b64decode('ICAgICAgPGRpdiBkYXRhLXRlc3RpZD0iZXZpZGVuY2UtcGFuZWwiIGNsYXNzTmFtZT0icmVzdWx0LWV2aWRlbmNlIj48ZGl2PjxzcGFuIGNsYXNzTmFtZT0ic2VjdGlvbi1raWNrZXIiPlBsYW4gcmVzdWx0PC9zcGFuPjxzdHJvbmcgZGF0YS10ZXN0aWQ9InZlcmRpY3QiPnthdXRob3JpdHl9PC9zdHJvbmc+PC9kaXY+PHA+e2FuYWx5c2lzU3RhdHVzTGFiZWx9PC9wPnthdXRob3JpdHkgPT09ICdGQUlMJyAmJiBwcmltYXJ5RmFpbHVyZSAmJiA8c21hbGw+UHJpbWFyeSBpc3N1ZToge3ByaW1hcnlGYWlsdXJlfTwvc21hbGw+fTwvZGl2Pg==').decode()
+          new = base64.b64decode('ICAgICAgPGRpdiBkYXRhLXRlc3RpZD0iZXZpZGVuY2UtcGFuZWwiIGNsYXNzTmFtZT0icmVzdWx0LWV2aWRlbmNlIj4KICAgICAgICA8ZGl2PgogICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPSJzZWN0aW9uLWtpY2tlciI+e2VwaGVtZXJhbFBhdGNoID8gJ0NvdW50ZXJleGFtcGxlIHJlcGxheScgOiAnUGxhbiByZXN1bHQnfTwvc3Bhbj4KICAgICAgICAgIDxzdHJvbmcgZGF0YS10ZXN0aWQ9InZlcmRpY3QiPntlcGhlbWVyYWxQYXRjaCA/IGFuYWx5c2lzLnJlc3VsdC52ZXJkaWN0IDogYXV0aG9yaXR5fTwvc3Ryb25nPgogICAgICAgIDwvZGl2PgogICAgICAgIDxwPntlcGhlbWVyYWxQYXRjaCA/IGAke2VwaGVtZXJhbFBhdGNoLm5hbWV9IMK3ICR7YW5hbHlzaXMucmVzdWx0LnZpb2xhdGlvbnMubGVuZ3RofSBtb2RlbGVkIHZpb2xhdGlvbiR7YW5hbHlzaXMucmVzdWx0LnZpb2xhdGlvbnMubGVuZ3RoID09PSAxID8gJycgOiAncyd9LmAgOiBhbmFseXNpc1N0YXR1c0xhYmVsfTwvcD4KICAgICAgICB7ZXBoZW1lcmFsUGF0Y2ggJiYgYW5hbHlzaXMucmVzdWx0LnZpb2xhdGlvbnMubGVuZ3RoID4gMCAmJiA8c21hbGw+UmVwbGF5IGlzc3Vlczoge2FuYWx5c2lzLnJlc3VsdC52aW9sYXRpb25zLnNsaWNlKDAsIDgpLm1hcCgoaXRlbSkgPT4gaXRlbS5saW5rSWQgPz8gaXRlbS5kZW1hbmRJZCA/PyBpdGVtLmNvZGUpLmZpbHRlcihCb29sZWFuKS5qb2luKCcsICcpfTwvc21hbGw+fQogICAgICAgIHshZXBoZW1lcmFsUGF0Y2ggJiYgYXV0aG9yaXR5ID09PSAnRkFJTCcgJiYgcHJpbWFyeUZhaWx1cmUgJiYgPHNtYWxsPlByaW1hcnkgaXNzdWU6IHtwcmltYXJ5RmFpbHVyZX08L3NtYWxsPn0KICAgICAgPC9kaXY+').decode()
+          replace_once('apps/web/components/workbench.tsx', old, new)
+          replace_once('apps/web/app/phase35b.css', '.topology-pan-surface{fill:transparent}', '.topology-pan-surface{fill:transparent;pointer-events:none}')
+          replace_once('apps/web/app/phase35c5.css', '.floating-notice { position: fixed; z-index: 95; left:', '.floating-notice { position: fixed; z-index: 95; pointer-events: none; left:')
+          replace_once('e2e/phase35c-performance-scale.spec.ts', "  await expect(page.getByTestId('capacity-analysis-status')).toContainText(/COMPLETE/i, { timeout: 15_000 });\n  const profile = await page.getByTestId('compute-profile').innerText();", "  await expect(page.getByTestId('capacity-analysis-status')).toContainText(/COMPLETE/i, { timeout: 15_000 });\n  await page.getByTestId('advanced-toggle').click();\n  await expect(page.getByTestId('advanced-drawer')).toBeVisible();\n  const profile = await page.getByTestId('compute-profile').innerText();")
           PY
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add apps/web/components/change-plan-panel.tsx apps/web/components/workbench.tsx apps/web/app/phase35b.css apps/web/app/phase35c5.css e2e/phase35c-performance-scale.spec.ts
