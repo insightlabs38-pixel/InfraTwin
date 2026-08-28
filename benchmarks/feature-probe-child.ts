@@ -28,6 +28,13 @@ function outagePatches(project: ReturnType<typeof generateScaleProject>, count: 
   }));
 }
 
+const routingLpSolveProbes: Record<string, { name: string; nodes: number; links: number; demands: number; seed: number; sourceConcentration: number; timeLimitMs: number }> = {
+  'routing-lp-solve-40k': { name: 'routing-lp-40k-probe', nodes: 100, links: 220, demands: 90, seed: 3675, sourceConcentration: 12, timeLimitMs: 5_000 },
+  'routing-lp-solve-60k': { name: 'routing-lp-60k-probe', nodes: 120, links: 270, demands: 110, seed: 3677, sourceConcentration: 14, timeLimitMs: 5_000 },
+  'routing-lp-solve-80k': { name: 'routing-lp-80k-probe', nodes: 140, links: 315, demands: 125, seed: 3679, sourceConcentration: 16, timeLimitMs: 5_000 },
+  'routing-lp-solve': { name: 'routing-lp-envelope-probe', nodes: 160, links: 360, demands: 135, seed: 3671, sourceConcentration: 16, timeLimitMs: 8_000 },
+};
+
 try {
   if (operation === 'n1-500') {
     const project = generateScaleProject({ id: 'C', name: 'feature-tier-c-n1-500', nodes: 500, links: 1200, demands: 400, regions: 12, seed: 3651, routingMode: 'single-shortest-path', workload: 'concentrated-sources', sourceConcentration: 24, upgradeOptionDensity: 0.4 });
@@ -39,11 +46,13 @@ try {
     const buildStartedAt = performance.now();
     const { problem } = buildTrafficAllocationLP(project);
     emit({ success: true, estimate, modelConstructionMs: performance.now() - buildStartedAt, problemBytes: Buffer.byteLength(problem, 'utf8') });
-  } else if (operation === 'routing-lp-solve') {
-    const project = generateScaleProject({ id: 'B', name: 'routing-lp-envelope-probe', nodes: 160, links: 360, demands: 135, regions: 8, seed: 3671, routingMode: 'single-shortest-path', workload: 'concentrated-sources', sourceConcentration: 16, upgradeOptionDensity: 0.3 });
+  } else if (routingLpSolveProbes[operation]) {
+    const config = routingLpSolveProbes[operation];
+    const project = generateScaleProject({ id: 'B', name: config.name, nodes: config.nodes, links: config.links, demands: config.demands, regions: 8, seed: config.seed, routingMode: 'single-shortest-path', workload: 'concentrated-sources', sourceConcentration: config.sourceConcentration, upgradeOptionDensity: 0.3 });
     const estimate = estimateTrafficAllocationLP(project);
-    const result = await optimizeRouting(project, { timeLimitMs: 8_000 });
-    emit({ success: result.diagnostics.status !== 'Not recommended at this scale', estimate, diagnostics: result.diagnostics });
+    const result = await optimizeRouting(project, { timeLimitMs: config.timeLimitMs, allowLargeModel: true });
+    const usable = result.diagnostics.proof === 'optimal' || (result.diagnostics.proof === 'feasible-incumbent' && result.verification?.valid === true);
+    emit({ success: usable, estimate, diagnostics: result.diagnostics, verificationValid: result.verification?.valid ?? null });
   } else if (operation === 'capacity-milp-build' || operation === 'capacity-milp-solve') {
     const project = generateScaleProject({ id: 'B', name: 'capacity-milp-probe', nodes: 250, links: 600, demands: 200, regions: 8, seed: 3691, routingMode: 'single-shortest-path', workload: 'concentrated-sources', sourceConcentration: 20, upgradeOptionDensity: 0.4 });
     const requirements = { includeBaseline: true, targetUtilizationPct: 95, scenarioPatches: outagePatches(project, 20) };
@@ -53,8 +62,8 @@ try {
       const { problem } = buildCapacityUpgradeMILP(project, requirements);
       emit({ success: true, estimate, modelConstructionMs: performance.now() - buildStartedAt, problemBytes: Buffer.byteLength(problem, 'utf8') });
     } else {
-      const result = await optimizeCapacityPlan(project, requirements, { timeLimitMs: 8_000 });
-      emit({ success: result.diagnostics.status !== 'Not recommended at this scale', estimate, diagnostics: result.diagnostics });
+      const result = await optimizeCapacityPlan(project, requirements, { timeLimitMs: 8_000, allowLargeModel: true });
+      emit({ success: result.diagnostics.proof !== 'unknown' && result.diagnostics.status !== 'Not recommended at this scale', estimate, diagnostics: result.diagnostics });
     }
   } else {
     throw new Error(`Unknown Phase 3.5C child probe: ${operation}`);
