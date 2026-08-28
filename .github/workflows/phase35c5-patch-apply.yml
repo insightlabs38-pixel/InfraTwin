@@ -10,29 +10,32 @@ permissions:
 
 jobs:
   apply:
-    if: ${{ !contains(github.event.head_commit.message, 'apply replay label type fix') }}
+    if: ${{ !contains(github.event.head_commit.message, 'apply SVG link hit-target fix') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Apply replay label type fix
+      - name: Apply SVG link hit-target fix
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
-          p = Path('apps/web/components/workbench.tsx')
+          p = Path('apps/web/components/topology-canvas.tsx')
           text = p.read_text()
-          old = 'item.linkId ?? item.demandId ?? item.code'
-          new = 'item.linkId ?? item.demandId ?? item.message'
-          if old not in text:
-              raise SystemExit('Expected replay label fragment not found')
-          p.write_text(text.replace(old, new, 1))
+          old_group = '<g key={link.id} className="link-group" data-testid={`topology-link-${link.id}`} onClick={(event) => { event.stopPropagation(); selectLink(link.id, event); }}>'
+          new_group = '<g key={link.id} className="link-group" onClick={(event) => { event.stopPropagation(); selectLink(link.id, event); }}>'
+          old_hit = '<line x1={source.x} y1={source.y} x2={target.x} y2={target.y} className="link-hit-target" vectorEffect="non-scaling-stroke" tabIndex={0} role="button"'
+          new_hit = '<line x1={source.x} y1={source.y} x2={target.x} y2={target.y} className="link-hit-target" data-testid={`topology-link-${link.id}`} vectorEffect="non-scaling-stroke" tabIndex={0} role="button"'
+          if old_group not in text or old_hit not in text:
+              raise SystemExit('Expected topology link fragments not found')
+          text = text.replace(old_group, new_group, 1).replace(old_hit, new_hit, 1)
+          p.write_text(text)
           PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/web/components/workbench.tsx
+          git add apps/web/components/topology-canvas.tsx
           git diff --cached --check
-          git commit -m "fix(phase-3.5c.5): apply replay label type fix"
+          git commit -m "fix(phase-3.5c.5): apply SVG link hit-target fix"
           git push origin HEAD:tmp/phase-3-5c5-validation
