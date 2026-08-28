@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { analyzeChangePlan, runLinkContingencies } from '../packages/evidence/src/index.ts';
 import { createRoutingSession, estimateRoutingWorkload, routeProject, routeProjectReference } from '../packages/graph-engine/src/index.ts';
 import { cloneProject, createChangePlan, modelHash, type NetworkProject } from '../packages/model/src/index.ts';
-import { estimateTrafficAllocationLP } from '../packages/optimizer/src/index.ts';
+import { CAPACITY_MILP_RECOMMENDED_MAX_DECISION_SCENARIO_PRODUCT, ROUTING_LP_RECOMMENDED_MAX_FLOW_VARIABLES, estimateCapacityMILP, estimateTrafficAllocationLP } from '../packages/optimizer/src/index.ts';
 import { generateScaleProject } from '../packages/scenarios/src/scale-generator.ts';
 import { executeChangePlanAnalysisWorkerKernel } from '../apps/web/lib/analysis-worker-core.ts';
 import { analysisExecutionProfile, createAnalysisAuthorityToken, isAnalysisAuthorityTokenCurrent, n1ExecutionPolicy } from '../apps/web/lib/analysis-execution.ts';
@@ -98,6 +98,10 @@ test('Phase 3.5C G: scale/execution estimator is deterministic and sends high-un
   const small = fixture('single-shortest-path');
   assert.deepEqual(estimateRoutingWorkload(small), estimateRoutingWorkload(structuredClone(small)));
   assert.deepEqual(analysisExecutionProfile(small), analysisExecutionProfile(structuredClone(small)));
+  const tierB = generateScaleProject({ id: 'B', name: 'main-thread-threshold', nodes: 250, links: 600, demands: 200, regions: 8, seed: 3551, routingMode: 'single-shortest-path', workload: 'concentrated-sources', sourceConcentration: 15, serviceClassCount: 3, upgradeOptionDensity: 0.1 });
+  assert.equal(analysisExecutionProfile(tierB).mode, 'main-thread');
+  const measuredTierC = generateScaleProject({ id: 'C', name: 'measured-worker-threshold', nodes: 500, links: 1200, demands: 400, regions: 12, seed: 3552, routingMode: 'single-shortest-path', workload: 'concentrated-sources', sourceConcentration: 30, serviceClassCount: 3, upgradeOptionDensity: 0.1 });
+  assert.equal(analysisExecutionProfile(measuredTierC).mode, 'worker');
   const large = generateScaleProject({ id: 'C', name: 'worker-threshold', nodes: 500, links: 1200, demands: 400, regions: 12, seed: 3553, routingMode: 'ecmp', workload: 'unique-sources', serviceClassCount: 3, upgradeOptionDensity: 0.1 });
   assert.equal(analysisExecutionProfile(large).mode, 'worker');
   const largeN1 = n1ExecutionPolicy(large);
@@ -116,6 +120,32 @@ test('Phase 3.5C H: routing-LP size estimator exactly matches demand × active d
   assert.equal(estimate.directedArcs, directedArcs);
   assert.equal(estimate.flowVariables, project.demands.length * directedArcs);
   assert.equal(estimate.constraints, project.demands.length * project.nodes.length + activeLinks.length);
+});
+
+test('Phase 3.5C H2: measured optimizer guardrails stay at the independently verified Phase 3.5C envelopes', () => {
+  assert.equal(ROUTING_LP_RECOMMENDED_MAX_FLOW_VARIABLES, 10_000);
+  assert.equal(CAPACITY_MILP_RECOMMENDED_MAX_DECISION_SCENARIO_PRODUCT, 10_000);
+
+  const small = fixture('ecmp');
+  const smallLp = estimateTrafficAllocationLP(small);
+  assert.equal(smallLp.recommended, true);
+
+  const large = generateScaleProject({ id: 'B', name: 'optimizer-guard-boundary', nodes: 250, links: 600, demands: 200, regions: 8, seed: 3691, routingMode: 'single-shortest-path', workload: 'concentrated-sources', sourceConcentration: 20, serviceClassCount: 3, upgradeOptionDensity: 0.4 });
+  const largeLp = estimateTrafficAllocationLP(large);
+  assert.equal(largeLp.recommended, false);
+  assert.match(largeLp.reason, /10,000/);
+
+  const outagePatches = (count: number) => large.links.slice(0, count).map((link, index) => ({
+    id: `guard-outage-${index}`, name: `Guard outage ${index}`, disabledNodeIds: [], disabledLinkIds: [link.id],
+    demandMultipliers: [], addedDemands: [], linkCapacityOverrides: [],
+  }));
+  const withinCapacity = estimateCapacityMILP(large, { includeBaseline: true, scenarioPatches: outagePatches(19) });
+  const aboveCapacity = estimateCapacityMILP(large, { includeBaseline: true, scenarioPatches: outagePatches(20) });
+  assert.equal(withinCapacity.decisionScenarioProduct, 9_560);
+  assert.equal(withinCapacity.recommended, true);
+  assert.equal(aboveCapacity.decisionScenarioProduct, 10_038);
+  assert.equal(aboveCapacity.recommended, false);
+  assert.match(aboveCapacity.reason, /10,000/);
 });
 
 test('Phase 3.5C I: exact N-1 explicitly distinguishes complete and partial coverage', () => {

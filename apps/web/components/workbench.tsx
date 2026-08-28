@@ -91,6 +91,7 @@ function pendingCapacityAnalysis(project: NetworkProject): CapacityAnalysis {
   };
 }
 
+const VIOLATION_RENDER_BATCH_SIZE = 200;
 const networkTemplates = listBundledScenarios();
 type SelectedScenarioId = BundledScenarioId | 'imported';
 const initialCompute: ComputeCapabilities = { workerSupported: false, hardwareConcurrency: 1, recommendedWorkerCount: 1, sharedArrayBufferSupported: false, crossOriginIsolated: false, executionMode: 'async-fallback' };
@@ -130,6 +131,7 @@ export function Workbench() {
   const [candidateVerification, setCandidateVerification] = useState<CandidateVerification | null>(null);
   const [candidateVerificationStamp, setCandidateVerificationStamp] = useState<PlanRevisionStamp | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [violationDisplay, setViolationDisplay] = useState<{ resultId: string; count: number }>({ resultId: '', count: VIOLATION_RENDER_BATCH_SIZE });
   const directRunControllerRef = useRef<AbortController | null>(null);
   const analysisControllerRef = useRef<AbortController | null>(null);
   const optimizerControllerRef = useRef<AbortController | null>(null);
@@ -181,6 +183,8 @@ export function Workbench() {
   const lockedLinkIds = useMemo(() => new Set(plan.restrictions.lockedLinkIds), [plan.restrictions.lockedLinkIds]);
   const lockedNodeIds = useMemo(() => new Set(plan.restrictions.lockedNodeIds), [plan.restrictions.lockedNodeIds]);
   const violationLinkIds = useMemo(() => new Set(analysis.result.violations.map((item) => item.linkId).filter((id): id is string => Boolean(id))), [analysis.result.violations]);
+  const visibleViolationCount = violationDisplay.resultId === analysis.result.id ? violationDisplay.count : VIOLATION_RENDER_BATCH_SIZE;
+  const visibleViolations = useMemo(() => analysis.result.violations.slice(0, visibleViolationCount), [analysis.result.violations, visibleViolationCount]);
   const selectedLinkIds = useMemo(() => {
     if (!selectedEvidence) return new Set<string>();
     if (selectedEvidence.type === 'link') return new Set([selectedEvidence.id]);
@@ -482,7 +486,7 @@ export function Workbench() {
         {resilienceStatus !== 'idle' && <div data-testid="resilience-status" className={`compute-card ${resilienceStatus}`}><span>N-1 execution</span><strong>{resilienceStatus} · {progressLabel}</strong><p>{resilienceMessage}</p></div>}
         {contingencies && n1Fresh && <div data-testid="resilience-evidence" className="evidence-block"><span className="block-label">N-1 evidence</span><strong>{contingencies.completedScenarios}/{contingencies.totalEligibleScenarios} failures tested · {contingencies.result.metrics.failingScenarios} failing</strong><p>Worst {String(contingencies.result.metrics.worstLinkId)} · peak {pct(Number(contingencies.result.metrics.worstPeakUtilizationPct))}</p></div>}
         <dl className="metrics evidence-metrics"><div><dt>Live routing</dt><dd>{analysis.routing.mode.toUpperCase()}</dd></div><div><dt>Live peak</dt><dd>{pct(peak)}</dd></div><div><dt>Unrouted</dt><dd>{analysis.routing.unroutedDemandIds.length}</dd></div><div><dt>Protected services</dt><dd>{plan.constraints.protectedServiceClassIds.join(', ') || 'none'}</dd></div></dl>
-        <div className="violation-list">{!analysisAuthoritative ? <p className="empty">Deterministic routing/capacity evidence has not been computed for this workload. Run Change Plan analysis to publish authoritative results.</p> : analysis.result.violations.length === 0 ? <p className="empty">No deterministic routing/capacity violations in the displayed planned snapshot.</p> : analysis.result.violations.map((violation) => <button className="violation" key={violation.id} onClick={() => selectViolation(violation)}><strong>{violation.type.replaceAll('_', ' ')}</strong><p>{violation.message}</p></button>)}</div>
+        <div className="violation-list">{!analysisAuthoritative ? <p className="empty">Deterministic routing/capacity evidence has not been computed for this workload. Run Change Plan analysis to publish authoritative results.</p> : analysis.result.violations.length === 0 ? <p className="empty">No deterministic routing/capacity violations in the displayed planned snapshot.</p> : <>{visibleViolations.map((violation) => <button className="violation" key={violation.id} onClick={() => selectViolation(violation)}><strong>{violation.type.replaceAll('_', ' ')}</strong><p>{violation.message}</p></button>)}{visibleViolations.length < analysis.result.violations.length && <button type="button" className="secondary wide" data-testid="show-more-violations" onClick={() => setViolationDisplay({ resultId: analysis.result.id, count: Math.min(analysis.result.violations.length, visibleViolations.length + VIOLATION_RENDER_BATCH_SIZE) })}>Show more violations · {visibleViolations.length.toLocaleString()} / {analysis.result.violations.length.toLocaleString()} shown</button>}</>}</div>
         {analysisAuthoritative && analysis.result.verdict === 'FAIL' && <button className="wide" onClick={inspectCurrentBottleneck}>Find min-cut bottleneck</button>}{bottleneck && <div className="evidence-block cut-block"><span className="block-label">Min-cut evidence</span><strong>{bottleneck.sourceId} → {bottleneck.targetId}: {gbps(bottleneck.cut.cutCapacityGbps)}</strong><p>Cut links: {bottleneck.cut.cutLinkIds.join(', ') || 'none'} · headroom {gbps(bottleneck.headroomGbps)}</p></div>}
         <div className="optimizer-actions"><button data-testid="run-optimizer" className="primary" disabled={!optimizerReady || optimizerStatus === 'running'} onClick={() => void runOptimizer()}>Generate constrained mitigation</button><button data-testid="propose-deterministic" disabled={!analysisAuthoritative || analysis.result.verdict !== 'FAIL'} onClick={quickMitigation}>Quick deterministic proposal</button>{candidate && <button data-testid="verify-candidate" disabled={candidateStale} onClick={() => void verifyCurrentCandidate()}>Verify proposal</button>}</div>
         <div data-testid="optimizer-status" className={`compute-card ${optimizerStatus === 'error' ? 'error' : optimizerStatus === 'running' ? 'running' : 'complete'}`}><span>Optimizer</span><strong>{optimizerStatus} · HiGHS WASM</strong><p>{optimizerMessage}</p></div>

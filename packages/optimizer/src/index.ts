@@ -190,8 +190,8 @@ function activeArcs(project: NetworkProject): Array<{ linkId: string; source: st
   return arcs;
 }
 
-export const ROUTING_LP_RECOMMENDED_MAX_FLOW_VARIABLES = 100_000;
-export const CAPACITY_MILP_RECOMMENDED_MAX_DECISION_SCENARIO_PRODUCT = 100_000;
+export const ROUTING_LP_RECOMMENDED_MAX_FLOW_VARIABLES = 10_000;
+export const CAPACITY_MILP_RECOMMENDED_MAX_DECISION_SCENARIO_PRODUCT = 10_000;
 
 export interface TrafficAllocationLPEstimate {
   directedArcs: number;

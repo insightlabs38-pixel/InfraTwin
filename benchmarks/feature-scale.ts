@@ -173,6 +173,9 @@ recordRoutingLpProbe('routing-lp-solve', 'Routing LP ~100k variable probe', lpCo
 
 // Bracket the normal 5 s browser solve envelope rather than deriving it from model-construction size alone.
 for (const bracket of [
+  { operation: 'routing-lp-solve-10k', fixture: 'Routing LP ~10k default-limit probe', counts: { nodes: 60, links: 100, demands: 50, regions: 8 } },
+  { operation: 'routing-lp-solve-20k', fixture: 'Routing LP ~20k default-limit probe', counts: { nodes: 70, links: 140, demands: 70, regions: 8 } },
+  { operation: 'routing-lp-solve-30k', fixture: 'Routing LP ~30k default-limit probe', counts: { nodes: 85, links: 175, demands: 85, regions: 8 } },
   { operation: 'routing-lp-solve-40k', fixture: 'Routing LP ~40k default-limit probe', counts: { nodes: 100, links: 220, demands: 90, regions: 8 } },
   { operation: 'routing-lp-solve-60k', fixture: 'Routing LP ~60k default-limit probe', counts: { nodes: 120, links: 270, demands: 110, regions: 8 } },
   { operation: 'routing-lp-solve-80k', fixture: 'Routing LP ~80k default-limit probe', counts: { nodes: 140, links: 315, demands: 125, regions: 8 } },

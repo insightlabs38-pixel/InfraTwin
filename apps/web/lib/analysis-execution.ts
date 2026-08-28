@@ -4,10 +4,10 @@ import { estimateRoutingWorkload } from '@infratwin/graph-engine';
 
 /**
  * Phase 3.5C adaptive execution threshold. This is a complexity envelope, not a runtime prediction.
- * It is deliberately conservative: workloads above it are moved off the main thread even when a
- * fast machine might finish quickly. The value is validated by the reproducible scale benchmark.
+ * It is deliberately conservative: workloads at or above the measured Tier-C class are moved off the main thread even when a
+ * fast machine might finish quickly. The value is validated by the reproducible browser benchmark.
  */
-export const ANALYSIS_WORKER_THRESHOLD_UNITS = 4_000_000;
+export const ANALYSIS_WORKER_THRESHOLD_UNITS = 700_000;
 
 export type CapacityExecutionMode = 'main-thread' | 'worker';
 
@@ -65,7 +65,7 @@ export interface AnalysisExecutionProfile {
 export function analysisExecutionProfile(project: NetworkProject): AnalysisExecutionProfile {
   const estimate = estimateRoutingWorkload(project);
   return {
-    mode: estimate.estimatedWorkUnits > ANALYSIS_WORKER_THRESHOLD_UNITS ? 'worker' : 'main-thread',
+    mode: estimate.estimatedWorkUnits >= ANALYSIS_WORKER_THRESHOLD_UNITS ? 'worker' : 'main-thread',
     estimatedWorkUnits: estimate.estimatedWorkUnits,
     shortestPathRuns: estimate.shortestPathRuns,
     directedArcs: estimate.directedArcs,

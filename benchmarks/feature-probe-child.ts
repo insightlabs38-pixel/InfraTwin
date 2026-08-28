@@ -29,6 +29,9 @@ function outagePatches(project: ReturnType<typeof generateScaleProject>, count: 
 }
 
 const routingLpSolveProbes: Record<string, { name: string; nodes: number; links: number; demands: number; seed: number; sourceConcentration: number; timeLimitMs: number }> = {
+  'routing-lp-solve-10k': { name: 'routing-lp-10k-probe', nodes: 60, links: 100, demands: 50, seed: 3681, sourceConcentration: 8, timeLimitMs: 5_000 },
+  'routing-lp-solve-20k': { name: 'routing-lp-20k-probe', nodes: 70, links: 140, demands: 70, seed: 3683, sourceConcentration: 9, timeLimitMs: 5_000 },
+  'routing-lp-solve-30k': { name: 'routing-lp-30k-probe', nodes: 85, links: 175, demands: 85, seed: 3685, sourceConcentration: 10, timeLimitMs: 5_000 },
   'routing-lp-solve-40k': { name: 'routing-lp-40k-probe', nodes: 100, links: 220, demands: 90, seed: 3675, sourceConcentration: 12, timeLimitMs: 5_000 },
   'routing-lp-solve-60k': { name: 'routing-lp-60k-probe', nodes: 120, links: 270, demands: 110, seed: 3677, sourceConcentration: 14, timeLimitMs: 5_000 },
   'routing-lp-solve-80k': { name: 'routing-lp-80k-probe', nodes: 140, links: 315, demands: 125, seed: 3679, sourceConcentration: 16, timeLimitMs: 5_000 },
