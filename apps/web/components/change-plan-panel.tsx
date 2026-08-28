@@ -56,7 +56,7 @@ export function ChangePlanPanel(props: Props) {
       </details>
 
       <details className="compact-disclosure" open={props.trafficEditorOpen} onToggle={(event) => props.onTrafficEditorOpenChange((event.currentTarget as HTMLDetailsElement).open)}>
-        <summary><span>Traffic changes</span><strong>{plan.changes.filter((item) => item.type === 'set_demand_bandwidth' || item.type === 'add_demand' || item.type === 'scale_demands').length} planned</strong></summary>
+        <summary><span>Traffic changes</span><strong>{plan.changes.filter((item) => item.type === 'set_demand_bandwidth' || item.type === 'add_demand' || item.type === 'demand_growth').length} planned</strong></summary>
         <div className="compact-disclosure-body"><DemandPlanEditor project={project} plan={plan} onSetBandwidth={props.onSetBandwidth} onAddDemand={props.onAddDemand} onAddGrowth={props.onAddGrowth} /></div>
       </details>
 
