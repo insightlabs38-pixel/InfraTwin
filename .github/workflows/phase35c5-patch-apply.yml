@@ -20,14 +20,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          PATCH_B64="planning/.phase35c5-ux.gz.b64"
-          if [[ ! -f "$PATCH_B64" ]]; then
-            echo "No staged Phase 3.5C.5 patch present."
+          shopt -s nullglob
+          PARTS=(planning/.phase35c5-ux.part-*)
+          if (( ${#PARTS[@]} == 0 )); then
+            echo "No staged Phase 3.5C.5 patch parts present."
             exit 0
           fi
-          base64 -d "$PATCH_B64" | gzip -d > /tmp/phase35c5.patch
+          cat "${PARTS[@]}" | base64 -d | gzip -d > /tmp/phase35c5.patch
           patch -p1 < /tmp/phase35c5.patch
-          rm -f "$PATCH_B64"
+          rm -f planning/.phase35c5-ux.gz.b64 "${PARTS[@]}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
@@ -35,5 +36,5 @@ jobs:
             echo "Patch produced no changes."
             exit 0
           fi
-          git commit -m "test(phase-3.5c.5): apply staged product UX implementation"
+          git commit -m "test(phase-3.5c.5): apply staged Phase 3.5C.5 UX patch"
           git push origin HEAD:tmp/phase-3-5c5-validation
