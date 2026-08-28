@@ -59,6 +59,7 @@ test('Phase 3.5C 2: Worker-scale baseline analysis stays interactive and publish
   await expect(page.getByTestId('capacity-analysis-status')).toContainText(/COMPLETE.*worker/i, { timeout: 30_000 });
   await expect(page.getByTestId('capacity-analysis-status')).toContainText(/ms measured on this browser run/i);
   await expect(page.getByTestId('plan-analysis-status')).toContainText(/PASS|FAIL/);
+  await expect(page.getByTestId('show-more-violations')).toContainText(/200 \/ [0-9,]+ shown/);
 });
 
 test('Phase 3.5C 3: stale Worker result cannot become authoritative after ChangePlan edit', async ({ page }) => {
