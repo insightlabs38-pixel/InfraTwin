@@ -40,6 +40,7 @@ interface FeatureMeasurement {
   solverStatus?: string;
   proof?: string;
   problemBytes?: number;
+  verificationValid?: boolean;
   message?: string;
   isolatedProbe?: boolean;
 }
@@ -100,6 +101,27 @@ function childProbe(operation: string): { payload: ChildPayload | null; message:
   return { payload: null, message: processMessage, wallRuntimeMs };
 }
 
+function recordRoutingLpProbe(childOperation: string, fixture: string, counts: FeatureMeasurement['counts'], featureOperation: 'routing-lp-build' | 'routing-lp-solve'): void {
+  const probe = childProbe(childOperation);
+  if (!probe.payload) {
+    add({ fixture, counts, operation: featureOperation, isolatedProbe: true, runtimeMs: probe.wallRuntimeMs, success: false, message: probe.message });
+    return;
+  }
+  const estimate = probe.payload.estimate ?? {};
+  const diagnostics = probe.payload.diagnostics ?? {};
+  add({
+    fixture, counts, operation: featureOperation, isolatedProbe: true,
+    runtimeMs: Number(probe.payload.runtimeMs ?? probe.wallRuntimeMs), success: Boolean(probe.payload.success),
+    directedArcs: Number(estimate.directedArcs ?? 0), flowVariables: Number(estimate.flowVariables ?? 0), constraints: Number(estimate.constraints ?? 0),
+    modelConstructionMs: Number(probe.payload.modelConstructionMs ?? diagnostics.modelConstructionMs ?? 0),
+    wasmInitializationMs: Number(diagnostics.wasmInitializationMs ?? 0), solveRuntimeMs: Number(diagnostics.solveRuntimeMs ?? 0),
+    solverStatus: diagnostics.status ? String(diagnostics.status) : undefined, proof: diagnostics.proof ? String(diagnostics.proof) : undefined,
+    problemBytes: probe.payload.problemBytes === undefined ? undefined : Number(probe.payload.problemBytes),
+    verificationValid: typeof probe.payload.verificationValid === 'boolean' ? probe.payload.verificationValid : undefined,
+    message: probe.payload.message ? String(probe.payload.message) : diagnostics.message ? String(diagnostics.message) : undefined,
+  });
+}
+
 console.log('\nInfraTwin Phase 3.5C feature-scale benchmark');
 
 const tierC = generateScaleProject({
@@ -146,24 +168,16 @@ if (n1Boundary.payload) {
 }
 
 const lpCounts = { nodes: 160, links: 360, demands: 135, regions: 8 };
-for (const [childOperation, featureOperation] of [['routing-lp-build', 'routing-lp-build'], ['routing-lp-solve', 'routing-lp-solve']] as const) {
-  const probe = childProbe(childOperation);
-  if (!probe.payload) {
-    add({ fixture: 'Routing LP ~100k variable probe', counts: lpCounts, operation: featureOperation, isolatedProbe: true, runtimeMs: probe.wallRuntimeMs, success: false, message: probe.message });
-    continue;
-  }
-  const estimate = probe.payload.estimate ?? {};
-  const diagnostics = probe.payload.diagnostics ?? {};
-  add({
-    fixture: 'Routing LP ~100k variable probe', counts: lpCounts, operation: featureOperation, isolatedProbe: true,
-    runtimeMs: Number(probe.payload.runtimeMs ?? probe.wallRuntimeMs), success: Boolean(probe.payload.success),
-    directedArcs: Number(estimate.directedArcs ?? 0), flowVariables: Number(estimate.flowVariables ?? 0), constraints: Number(estimate.constraints ?? 0),
-    modelConstructionMs: Number(probe.payload.modelConstructionMs ?? diagnostics.modelConstructionMs ?? 0),
-    wasmInitializationMs: Number(diagnostics.wasmInitializationMs ?? 0), solveRuntimeMs: Number(diagnostics.solveRuntimeMs ?? 0),
-    solverStatus: diagnostics.status ? String(diagnostics.status) : undefined, proof: diagnostics.proof ? String(diagnostics.proof) : undefined,
-    problemBytes: probe.payload.problemBytes === undefined ? undefined : Number(probe.payload.problemBytes),
-    message: probe.payload.message ? String(probe.payload.message) : diagnostics.message ? String(diagnostics.message) : undefined,
-  });
+recordRoutingLpProbe('routing-lp-build', 'Routing LP ~100k variable probe', lpCounts, 'routing-lp-build');
+recordRoutingLpProbe('routing-lp-solve', 'Routing LP ~100k variable probe', lpCounts, 'routing-lp-solve');
+
+// Bracket the normal 5 s browser solve envelope rather than deriving it from model-construction size alone.
+for (const bracket of [
+  { operation: 'routing-lp-solve-40k', fixture: 'Routing LP ~40k default-limit probe', counts: { nodes: 100, links: 220, demands: 90, regions: 8 } },
+  { operation: 'routing-lp-solve-60k', fixture: 'Routing LP ~60k default-limit probe', counts: { nodes: 120, links: 270, demands: 110, regions: 8 } },
+  { operation: 'routing-lp-solve-80k', fixture: 'Routing LP ~80k default-limit probe', counts: { nodes: 140, links: 315, demands: 125, regions: 8 } },
+] as const) {
+  recordRoutingLpProbe(bracket.operation, bracket.fixture, bracket.counts, 'routing-lp-solve');
 }
 
 const lpGuard = generateScaleProject({
