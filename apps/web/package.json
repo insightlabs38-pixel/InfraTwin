@@ -16,8 +16,7 @@
     "next": "16.3.3",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "@infratwin/optimizer": "*",
-    "@infratwin/application": "*"
+    "@infratwin/optimizer": "*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
