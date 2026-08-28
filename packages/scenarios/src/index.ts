@@ -1,8 +1,9 @@
 import type { ChangePlan, LinkModel, NetworkProject, NodeModel, PlanChange, ScenarioPatch } from '../../model/src/index.ts';
 import { addPlanChange, cloneProject, createChangePlan, setPlanConstraint, setPlanLinkLocked } from '../../model/src/index.ts';
+import { generateScaleProject } from './scale-generator.ts';
 
-export type BundledScenarioId = 'continental-service-network' | 'maintenance-trap' | 'growth-wall' | 'resilience-gap' | 'blank';
-export type ScenarioKind = 'flagship' | 'maintenance' | 'growth' | 'resilience' | 'blank';
+export type BundledScenarioId = 'continental-service-network' | 'national-backbone-scale-test' | 'maintenance-trap' | 'growth-wall' | 'resilience-gap' | 'blank';
+export type ScenarioKind = 'flagship' | 'scale' | 'maintenance' | 'growth' | 'resilience' | 'blank';
 
 export interface ScenarioDefinition {
   id: BundledScenarioId;
@@ -179,6 +180,30 @@ function buildFlagshipProject(): NetworkProject {
 
 const continentalServiceNetwork = buildFlagshipProject();
 
+const nationalBackboneScaleTest = generateScaleProject({
+  id: 'C',
+  name: 'national-backbone-scale-test',
+  nodes: 500,
+  links: 1200,
+  demands: 400,
+  regions: 12,
+  seed: 3553,
+  routingMode: 'single-shortest-path',
+  workload: 'concentrated-sources',
+  sourceConcentration: 30,
+  serviceClassCount: 3,
+  upgradeOptionDensity: 0.4,
+});
+nationalBackboneScaleTest.id = 'national-backbone-scale-test-v1';
+nationalBackboneScaleTest.name = 'National Backbone Scale Test';
+nationalBackboneScaleTest.metadata = {
+  ...(nationalBackboneScaleTest.metadata ?? {}),
+  description: 'Deterministic 500-node / 1,200-link / 400-demand synthetic backbone used to demonstrate browser-scale deterministic analysis and workspace responsiveness.',
+  suggestedPrompt: 'Inspect this scale-proof network, run deterministic Change Plan analysis, and use Compute Profile to understand which operations are interactive, bounded, or not recommended.',
+  realisticSynthetic: true,
+  scaleProof: true,
+};
+
 const maintenanceTrap: NetworkProject = {
   schemaVersion: '0.1',
   id: 'maintenance-trap-l1',
@@ -335,6 +360,12 @@ const definitions: Record<BundledScenarioId, ScenarioDefinition> = {
     defaultGrowthMultiplier: 1.35,
     changePlanTemplate: flagshipPlanTemplate,
   },
+  'national-backbone-scale-test': {
+    id: 'national-backbone-scale-test', title: 'National Backbone Scale Test', kind: 'scale',
+    description: String(nationalBackboneScaleTest.metadata?.description ?? ''),
+    suggestedPrompt: String(nationalBackboneScaleTest.metadata?.suggestedPrompt ?? ''),
+    project: nationalBackboneScaleTest,
+  },
   'maintenance-trap': {
     id: 'maintenance-trap', title: 'Maintenance Trap', kind: 'maintenance',
     description: String(maintenanceTrap.metadata?.description ?? ''),
@@ -377,7 +408,7 @@ function copyDefinition(definition: ScenarioDefinition): ScenarioDefinition {
 }
 
 export function listBundledScenarios(): ScenarioDefinition[] {
-  return (['continental-service-network', 'maintenance-trap', 'growth-wall', 'resilience-gap', 'blank'] as BundledScenarioId[]).map((id) => copyDefinition(definitions[id]));
+  return (['continental-service-network', 'national-backbone-scale-test', 'maintenance-trap', 'growth-wall', 'resilience-gap', 'blank'] as BundledScenarioId[]).map((id) => copyDefinition(definitions[id]));
 }
 
 export function getScenarioDefinition(id: BundledScenarioId): ScenarioDefinition {
@@ -389,6 +420,7 @@ export function loadScenario(id: BundledScenarioId): NetworkProject {
 }
 
 export function loadFlagshipNetwork(): NetworkProject { return loadScenario('continental-service-network'); }
+export function loadNationalBackboneScaleTest(): NetworkProject { return loadScenario('national-backbone-scale-test'); }
 export function loadMaintenanceTrap(): NetworkProject { return loadScenario('maintenance-trap'); }
 export function loadGrowthWall(): NetworkProject { return loadScenario('growth-wall'); }
 export function loadResilienceGap(): NetworkProject { return loadScenario('resilience-gap'); }

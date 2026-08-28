@@ -7,6 +7,7 @@ import {
   acceptCandidateChange,
   addPlanChange,
   changePlanHash,
+  changePlanEvidenceStamp,
   changePlanRevisionStamp,
   cloneProject,
   compileChangePlanToScenarioPatch,
@@ -44,8 +45,11 @@ import {
   type CapacityAnalysis,
 } from '@infratwin/evidence';
 import { getScenarioDefinition, listBundledScenarios, loadScenario, type BundledScenarioId, type ScenarioDefinition } from '@infratwin/scenarios';
+import { estimateCapacityMILP, estimateTrafficAllocationLP } from '@infratwin/optimizer';
 import type { CapacityOptimizationResult, CapacityPlanRequirements, CandidateVerification, TrafficAllocationResult } from '@infratwin/optimizer';
 import { optimizeCapacityInBrowser, optimizeRoutingInBrowser, probeBrowserOptimizer, verifyCandidateInBrowser } from '../lib/optimizer-client';
+import { analyzeChangePlanInBrowserWorker } from '../lib/analysis-client';
+import { analysisExecutionProfile, createAnalysisAuthorityToken, isAnalysisAuthorityTokenCurrent, n1ExecutionPolicy, N1_ENGINE_HARD_CAP, type CapacityExecutionMode } from '../lib/analysis-execution';
 import { AnalysisJourney } from './analysis-journey';
 import { ChangePlanPanel } from './change-plan-panel';
 import { ScenarioSelector } from './scenario-selector';
@@ -77,6 +81,17 @@ function clonePlan(plan: ChangePlan): ChangePlan { return JSON.parse(JSON.string
 function allRouteLinks(route: CapacityAnalysis['routing']['routes'][number] | undefined): string[] { return route ? Object.keys(route.linkFractions).filter((linkId) => route.linkFractions[linkId] > 0).sort() : []; }
 function createBrowserWorker(): ContingencyWorkerLike { return new Worker(new URL('../workers/contingency.worker.ts', import.meta.url), { type: 'module' }) as unknown as ContingencyWorkerLike; }
 
+function pendingCapacityAnalysis(project: NetworkProject): CapacityAnalysis {
+  const linkLoadsGbps = Object.fromEntries(project.links.map((link) => [link.id, 0])) as Record<string, number>;
+  const linkUtilizationPct = Object.fromEntries(project.links.map((link) => [link.id, 0])) as Record<string, number>;
+  return {
+    snapshot: project,
+    routing: { mode: project.routingProfile.mode, routes: [], linkLoadsGbps, linkUtilizationPct, peakUtilizationPct: 0, unroutedDemandIds: [] },
+    result: { id: `pending:${project.id}`, type: 'capacity', verdict: 'CANCELLED', modelHash: '', scenarioHash: 'pending', solver: { id: 'not-run', version: '3.5c' }, assumptions: [], metrics: { pending: true }, violations: [], witnesses: [], runtimeMs: 0 },
+  };
+}
+
+const VIOLATION_RENDER_BATCH_SIZE = 200;
 const networkTemplates = listBundledScenarios();
 type SelectedScenarioId = BundledScenarioId | 'imported';
 const initialCompute: ComputeCapabilities = { workerSupported: false, hardwareConcurrency: 1, recommendedWorkerCount: 1, sharedArrayBufferSupported: false, crossOriginIsolated: false, executionMode: 'async-fallback' };
@@ -103,8 +118,12 @@ export function Workbench() {
   const [lastToolAnalysis, setLastToolAnalysis] = useState('');
   const [compute, setCompute] = useState<ComputeCapabilities>(initialCompute);
   const [progress, setProgress] = useState<ContingencyProgress | null>(null);
-  const [resilienceStatus, setResilienceStatus] = useState<'idle' | 'running' | 'complete' | 'cancelled' | 'error'>('idle');
+  const [resilienceStatus, setResilienceStatus] = useState<'idle' | 'running' | 'complete' | 'partial' | 'cancelled' | 'error'>('idle');
   const [resilienceMessage, setResilienceMessage] = useState('');
+  const [analysisStatus, setAnalysisStatus] = useState<'idle' | 'running' | 'complete' | 'cancelled' | 'error'>('idle');
+  const [analysisMessage, setAnalysisMessage] = useState('');
+  const [lastAnalysisRuntimeMs, setLastAnalysisRuntimeMs] = useState<number | null>(null);
+  const [lastAnalysisExecution, setLastAnalysisExecution] = useState<CapacityExecutionMode | null>(null);
   const [optimizerStatus, setOptimizerStatus] = useState<'loading' | 'ready' | 'running' | 'error'>('loading');
   const [optimizerMessage, setOptimizerMessage] = useState('Loading HiGHS WASM in a worker…');
   const [optimizerResult, setOptimizerResult] = useState<CapacityOptimizationResult | null>(null);
@@ -112,7 +131,9 @@ export function Workbench() {
   const [candidateVerification, setCandidateVerification] = useState<CandidateVerification | null>(null);
   const [candidateVerificationStamp, setCandidateVerificationStamp] = useState<PlanRevisionStamp | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [violationDisplay, setViolationDisplay] = useState<{ resultId: string; count: number }>({ resultId: '', count: VIOLATION_RENDER_BATCH_SIZE });
   const directRunControllerRef = useRef<AbortController | null>(null);
+  const analysisControllerRef = useRef<AbortController | null>(null);
   const optimizerControllerRef = useRef<AbortController | null>(null);
   const analysisEpochRef = useRef(0);
   const planCounterRef = useRef(1);
@@ -134,17 +155,22 @@ export function Workbench() {
     : getScenarioDefinition(selectedScenarioId), [selectedScenarioId, project]);
   const compiledPlanPatch = useMemo(() => compileChangePlanToScenarioPatch(project, plan), [project, plan]);
   const solverPatch = useMemo(() => ephemeralPatch ?? (plan.changes.length ? compiledPlanPatch : null), [ephemeralPatch, plan.changes.length, compiledPlanPatch]);
-  const livePlanAnalysis = useMemo(() => analyzeChangePlan(project, plan), [project, plan]);
-  const analysis = useMemo(() => ephemeralPatch ? runScenarioCapacityAnalysis(project, ephemeralPatch) : livePlanAnalysis.capacity, [project, ephemeralPatch, livePlanAnalysis]);
+  const executionProfile = useMemo(() => analysisExecutionProfile(project), [project]);
+  const currentProjectHash = useMemo(() => modelHash(project), [project]);
+  const currentPlanHash = useMemo(() => changePlanHash(plan), [plan]);
+  const analysisFresh = Boolean(publishedPlanAnalysis && isPlanEvidenceFresh(publishedPlanAnalysis.stamp, project, plan));
+  const syncLivePlanAnalysis = useMemo(() => executionProfile.mode === 'main-thread' ? analyzeChangePlan(project, plan) : null, [executionProfile.mode, project, plan]);
+  const displayedPlanAnalysis = analysisFresh ? publishedPlanAnalysis : syncLivePlanAnalysis;
+  const pendingAnalysis = useMemo(() => pendingCapacityAnalysis(project), [project]);
+  const analysis = useMemo(() => ephemeralPatch ? runScenarioCapacityAnalysis(project, ephemeralPatch) : (displayedPlanAnalysis?.capacity ?? pendingAnalysis), [project, ephemeralPatch, displayedPlanAnalysis, pendingAnalysis]);
+  const analysisAuthoritative = Boolean(ephemeralPatch || displayedPlanAnalysis);
   const snapshot = analysis.snapshot;
   const routeByDemand = useMemo(() => new Map(analysis.routing.routes.map((route) => [route.demandId, route])), [analysis.routing.routes]);
   const selectedCanonicalLink = useMemo(() => selectedLinkId ? project.links.find((link) => link.id === selectedLinkId) : undefined, [project.links, selectedLinkId]);
   const selectedCanonicalNode = useMemo(() => selectedNodeId ? project.nodes.find((node) => node.id === selectedNodeId) : undefined, [project.nodes, selectedNodeId]);
   const selectedDemandId = selectedEvidence?.type === 'demand' ? (selectedEvidence.demandId ?? selectedEvidence.id) : null;
-  const analysisFresh = Boolean(publishedPlanAnalysis && isPlanEvidenceFresh(publishedPlanAnalysis.stamp, project, plan));
   const n1Fresh = Boolean(contingencyStamp && isPlanEvidenceFresh(contingencyStamp, project, plan));
   const verificationFresh = Boolean(candidateVerification && candidateVerificationStamp && isPlanRevisionFresh(candidateVerificationStamp, project, plan));
-  const currentPlanHash = changePlanHash(plan);
   const pendingProposals = plan.proposals.filter((proposal) => proposal.state === 'pending');
   const candidateStale = pendingProposals.some((proposal) => proposal.sourcePlanHash !== currentPlanHash);
 
@@ -157,6 +183,8 @@ export function Workbench() {
   const lockedLinkIds = useMemo(() => new Set(plan.restrictions.lockedLinkIds), [plan.restrictions.lockedLinkIds]);
   const lockedNodeIds = useMemo(() => new Set(plan.restrictions.lockedNodeIds), [plan.restrictions.lockedNodeIds]);
   const violationLinkIds = useMemo(() => new Set(analysis.result.violations.map((item) => item.linkId).filter((id): id is string => Boolean(id))), [analysis.result.violations]);
+  const visibleViolationCount = violationDisplay.resultId === analysis.result.id ? violationDisplay.count : VIOLATION_RENDER_BATCH_SIZE;
+  const visibleViolations = useMemo(() => analysis.result.violations.slice(0, visibleViolationCount), [analysis.result.violations, visibleViolationCount]);
   const selectedLinkIds = useMemo(() => {
     if (!selectedEvidence) return new Set<string>();
     if (selectedEvidence.type === 'link') return new Set([selectedEvidence.id]);
@@ -168,8 +196,9 @@ export function Workbench() {
   const cancelAsync = () => {
     analysisEpochRef.current += 1;
     directRunControllerRef.current?.abort(); directRunControllerRef.current = null;
+    analysisControllerRef.current?.abort(); analysisControllerRef.current = null;
     optimizerControllerRef.current?.abort(); optimizerControllerRef.current = null;
-    setProgress(null); setResilienceStatus('idle'); setResilienceMessage('');
+    setProgress(null); setResilienceStatus('idle'); setResilienceMessage(''); setAnalysisStatus('idle'); setAnalysisMessage('');
     if (optimizerStatus === 'running') { setOptimizerStatus('ready'); setOptimizerMessage('Run cancelled because the Change Plan changed.'); }
   };
   const commitPlan = (next: ChangePlan) => {
@@ -205,7 +234,8 @@ export function Workbench() {
     const next = await runLinkContingenciesAsync(baseProject, basePatch, { ...options, workerCount: options.workerCount ?? capabilities.recommendedWorkerCount, workerFactory: capabilities.workerSupported ? createBrowserWorker : undefined, onProgress: (value) => { if (analysisEpochRef.current !== runEpoch) return; setProgress(value); externalProgress?.(value); } });
     if (analysisEpochRef.current !== runEpoch) return { ...next, status: 'cancelled' };
     if (next.status === 'cancelled') { setResilienceStatus('cancelled'); setResilienceMessage(`Cancelled after ${next.completedScenarios} scenario(s); no partial PASS was published.`); return next; }
-    setResilienceStatus('complete'); setResilienceMessage(`${next.completedScenarios} scenarios completed via ${next.executionMode} with ${next.workerCount} worker slot(s).`); return next;
+    if (next.status === 'partial') { setResilienceStatus('partial'); setResilienceMessage(`${next.completedScenarios}/${next.totalEligibleScenarios} link failures tested; PARTIAL COVERAGE. Exact analysis is bounded to the requested scenario count.`); return next; }
+    setResilienceStatus('complete'); setResilienceMessage(`${next.completedScenarios}/${next.totalEligibleScenarios} link failures tested; COMPLETE COVERAGE via ${next.executionMode} with ${next.workerCount} worker slot(s).`); return next;
   };
 
   const toolServices = useMemo<InfraTwinToolServices>(() => ({
@@ -217,7 +247,7 @@ export function Workbench() {
     publishCapacityAnalysis: (next) => setLastToolAnalysis(`${next.result.verdict} · ${next.routing.mode} · peak ${pct(next.routing.peakUtilizationPct)}`),
     runContingencies: (options) => executeContingencies(options),
     getContingencyAnalysis: () => contingencyRef.current,
-    publishContingencyAnalysis: (next) => { if (next.status === 'complete') { contingencyRef.current = next; setContingencies(next); setLastToolAnalysis(`${next.completedScenarios} N-1 scenarios · worst ${next.result.metrics.worstLinkId}`); } },
+    publishContingencyAnalysis: (next) => { if (next.status !== 'cancelled') { contingencyRef.current = next; setContingencies(next); setLastToolAnalysis(`${next.completedScenarios}/${next.totalEligibleScenarios} N-1 scenarios · ${next.status.toUpperCase()} · worst ${next.result.metrics.worstLinkId}`); } },
     publishBottleneckAnalysis: (next) => setBottleneck(next), selectEvidence: (next) => setSelectedEvidence(next),
     getCandidate: () => candidateRef.current, getLockedLinkIds: () => [...planRef.current.restrictions.lockedLinkIds], setCandidate: (next) => { if (next) publishCandidate(next); else { if (planRef.current.proposals.some((proposal) => proposal.state === 'pending')) { const nextPlan = discardCandidateProposals(planRef.current, new Date().toISOString(), 'agent'); planRef.current = nextPlan; setPlan(nextPlan); } candidateRef.current = null; setCandidate(null); } }, publishCandidateComparison: (next) => setComparison(next),
     optimizeCapacity: (requirements, options) => optimizeCapacityInBrowser(projectRef.current, { ...requirements, lockedLinkIds: [...new Set([...(requirements.lockedLinkIds ?? []), ...planRef.current.restrictions.lockedLinkIds])] }, 8_000, options?.signal),
@@ -241,7 +271,7 @@ export function Workbench() {
     registerResilienceTools(context, toolServices).then((dispose) => { if (!active) dispose(); else { cleanup = dispose; setRegisteredTools((current) => [...new Set([...current, ...RESILIENCE_TOOL_NAMES])]); } }).catch(() => setWebmcpStatus('error'));
     return () => { active = false; cleanup?.(); setRegisteredTools((current) => current.filter((name) => !names.includes(name))); };
   }, [canRunResilience, toolServices]);
-  const hasViolation = analysis.result.verdict === 'FAIL';
+  const hasViolation = analysisAuthoritative && analysis.result.verdict === 'FAIL';
   useEffect(() => {
     const names = VIOLATION_TOOL_NAMES as readonly string[]; if (!hasViolation) { setRegisteredTools((current) => current.filter((name) => !names.includes(name))); return; }
     const context = (document as Document & { modelContext?: ModelContextLike }).modelContext; if (!context?.registerTool) return; let cleanup: (() => void) | undefined; let active = true;
@@ -323,23 +353,48 @@ export function Workbench() {
 
   const analyzeCurrentPlan = async () => {
     ephemeralRef.current = null; setEphemeralPatch(null); cancelAsync();
-    const base = cloneProject(projectRef.current); const planSnapshot = clonePlan(planRef.current); const result = analyzeChangePlan(base, planSnapshot); setPublishedPlanAnalysis(result); setBottleneck(null); setSelectedEvidence(result.capacity.result.witnesses.find((item) => item.type === 'route' || item.type === 'link') ?? null);
-    let n1Fail = false;
+    const base = cloneProject(projectRef.current); const planSnapshot = clonePlan(planRef.current);
+    const runEpoch = analysisEpochRef.current;
+    const token = createAnalysisAuthorityToken(base, planSnapshot, runEpoch);
+    const preferredMode = analysisExecutionProfile(base).mode;
+    const mode: CapacityExecutionMode = preferredMode === 'worker' && typeof Worker === 'function' ? 'worker' : 'main-thread';
+    setAnalysisStatus('running'); setAnalysisMessage(mode === 'worker' ? 'Deterministic Change Plan analysis is running in a browser Worker…' : 'Deterministic Change Plan analysis is running on the main thread…');
+    let result: ChangePlanAnalysis;
+    let runtimeMs = 0;
+    try {
+      if (mode === 'worker') {
+        const controller = new AbortController(); analysisControllerRef.current = controller;
+        const workerResult = await analyzeChangePlanInBrowserWorker(base, planSnapshot, controller.signal);
+        result = workerResult.analysis; runtimeMs = workerResult.runtimeMs;
+        if (analysisControllerRef.current === controller) analysisControllerRef.current = null;
+      } else {
+        const startedAt = performance.now(); result = analyzeChangePlan(base, planSnapshot); runtimeMs = Math.round((performance.now() - startedAt) * 1000) / 1000;
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') { setAnalysisStatus('cancelled'); setAnalysisMessage('Analysis cancelled; no result was published.'); return; }
+      setAnalysisStatus('error'); setAnalysisMessage(error instanceof Error ? error.message : 'Capacity analysis failed.'); return;
+    }
+    if (!isAnalysisAuthorityTokenCurrent(token, projectRef.current, planRef.current, runEpoch)) { setAnalysisStatus('cancelled'); setAnalysisMessage('Stale analysis result discarded because the network or Change Plan changed.'); return; }
+    setPublishedPlanAnalysis(result); setLastAnalysisRuntimeMs(runtimeMs); setLastAnalysisExecution(mode); setAnalysisStatus('complete'); setAnalysisMessage(`${mode === 'worker' ? 'Worker' : 'Main thread'} · ${runtimeMs} ms measured on this browser run.`);
+    setBottleneck(null); setSelectedEvidence(result.capacity.result.witnesses.find((item) => item.type === 'route' || item.type === 'link') ?? null);
+    let n1Fail = false; let n1Incomplete = false;
     if (planSnapshot.constraints.requireN1 && base.links.some((link) => link.available !== false)) {
       const controller = new AbortController(); directRunControllerRef.current = controller;
       try {
-        const next = await executeContingencies({ signal: controller.signal, maxScenarios: 500, timeLimitMs: 30_000 }, { project: base, patch: result.patch });
-        if (next.status !== 'complete' || !isPlanEvidenceFresh(result.stamp, projectRef.current, planRef.current)) return;
-        contingencyRef.current = next; setContingencies(next); setContingencyStamp(result.stamp); n1Fail = Number(next.result.metrics.failingScenarios ?? 0) > 0;
+        const next = await executeContingencies({ signal: controller.signal, ...(() => { const policy = n1ExecutionPolicy(base); return { maxScenarios: policy.maxScenarios, timeLimitMs: policy.timeLimitMs }; })() }, { project: base, patch: result.patch });
+        if (next.status === 'cancelled' || !isPlanEvidenceFresh(result.stamp, projectRef.current, planRef.current)) return;
+        contingencyRef.current = next; setContingencies(next); setContingencyStamp(result.stamp); n1Fail = Number(next.result.metrics.failingScenarios ?? 0) > 0; n1Incomplete = next.status !== 'complete';
       } catch (error) { if (!(error instanceof Error && error.name === 'AbortError')) { setResilienceStatus('error'); setResilienceMessage(error instanceof Error ? error.message : 'N-1 analysis failed.'); } return; }
       finally { if (directRunControllerRef.current === controller) directRunControllerRef.current = null; }
     } else { setContingencies(null); setContingencyStamp(null); }
     if (!isPlanEvidenceFresh(result.stamp, projectRef.current, planRef.current)) return;
-    const fail = result.verdict === 'FAIL' || n1Fail; setStatusOnly(fail ? 'failing' : 'analyzed', `Plan analyzed: ${fail ? 'FAIL' : 'PASS'}${planSnapshot.constraints.requireN1 ? ' including N-1' : ''}.`);
+    const fail = result.verdict === 'FAIL' || n1Fail || n1Incomplete;
+    const n1Summary = planSnapshot.constraints.requireN1 ? (n1Incomplete ? ' with partial N-1 coverage' : ' including complete N-1') : '';
+    setStatusOnly(fail ? 'failing' : 'analyzed', `Plan analyzed: ${fail ? 'FAIL' : 'PASS'}${n1Summary}.`);
   };
   const runPlanN1 = async () => {
-    ephemeralRef.current = null; setEphemeralPatch(null); const stamp = livePlanAnalysis.stamp; const controller = new AbortController(); directRunControllerRef.current = controller;
-    try { const next = await executeContingencies({ signal: controller.signal, maxScenarios: 500, timeLimitMs: 30_000 }, { project: cloneProject(projectRef.current), patch: livePlanAnalysis.patch }); if (next.status === 'complete' && isPlanEvidenceFresh(stamp, projectRef.current, planRef.current)) { contingencyRef.current = next; setContingencies(next); setContingencyStamp(stamp); } }
+    ephemeralRef.current = null; setEphemeralPatch(null); const stamp = changePlanEvidenceStamp(projectRef.current, planRef.current); const patch = compileChangePlanToScenarioPatch(projectRef.current, planRef.current); const controller = new AbortController(); directRunControllerRef.current = controller; const policy = n1ExecutionPolicy(projectRef.current);
+    try { const next = await executeContingencies({ signal: controller.signal, maxScenarios: policy.maxScenarios, timeLimitMs: policy.timeLimitMs }, { project: cloneProject(projectRef.current), patch }); if (next.status !== 'cancelled' && isPlanEvidenceFresh(stamp, projectRef.current, planRef.current)) { contingencyRef.current = next; setContingencies(next); setContingencyStamp(stamp); } }
     catch (error) { setResilienceStatus(error instanceof Error && error.name === 'AbortError' ? 'cancelled' : 'error'); setResilienceMessage(error instanceof Error ? error.message : 'N-1 failed.'); }
     finally { if (directRunControllerRef.current === controller) directRunControllerRef.current = null; }
   };
@@ -357,7 +412,7 @@ export function Workbench() {
     const expectedPlanHash = changePlanHash(planRef.current); const expectedModelHash = modelHash(projectRef.current); let currentN1 = contingencies;
     try {
       if (planRef.current.constraints.requireN1 && !n1Fresh) {
-        const stamp = livePlanAnalysis.stamp; currentN1 = await executeContingencies({ signal: controller.signal, maxScenarios: 500, timeLimitMs: 30_000 }, { project: cloneProject(projectRef.current), patch: livePlanAnalysis.patch });
+        const stamp = changePlanEvidenceStamp(projectRef.current, planRef.current); const planPatch = compileChangePlanToScenarioPatch(projectRef.current, planRef.current); const policy = n1ExecutionPolicy(projectRef.current); currentN1 = await executeContingencies({ signal: controller.signal, maxScenarios: policy.maxScenarios, timeLimitMs: policy.timeLimitMs }, { project: cloneProject(projectRef.current), patch: planPatch });
         if (currentN1.status !== 'complete') throw new Error('N-1 constraint was not fully evaluated; optimizer candidate was not published.');
         if (!isPlanEvidenceFresh(stamp, projectRef.current, planRef.current)) throw new Error('Plan changed during N-1 evaluation.');
         setContingencies(currentN1); setContingencyStamp(stamp);
@@ -389,18 +444,30 @@ export function Workbench() {
   const authority: 'DRAFT' | 'PASS' | 'FAIL' | 'STALE' = publishedPlanAnalysis ? (analysisFresh ? publishedPlanAnalysis.verdict : 'STALE') : 'DRAFT';
   const verificationStatus = candidateVerification ? (verificationFresh ? candidateVerification.status : 'stale') : null;
   const peak = analysis.routing.peakUtilizationPct; const primaryFailure = analysis.result.violations[0]?.linkId ?? analysis.result.violations[0]?.demandId ?? null;
-  const candidateLabel = pendingProposals.length ? `${pendingProposals.length} proposed change${pendingProposals.length === 1 ? '' : 's'}` : analysis.result.verdict === 'FAIL' ? 'Mitigation available' : 'No proposal pending';
+  const candidateLabel = pendingProposals.length ? `${pendingProposals.length} proposed change${pendingProposals.length === 1 ? '' : 's'}` : analysisAuthoritative && analysis.result.verdict === 'FAIL' ? 'Mitigation available' : 'No proposal pending';
   const nextStep = verificationStatus === 'verified' ? 'Accept or reject individual proposals; any revision invalidates verification.' : verificationStatus === 'stale' ? 'The plan changed. Re-run optimization/verification before acceptance.' : pendingProposals.length ? 'Verify, then accept or reject individual proposed changes.' : 'Analyze the plan, inspect evidence, and request mitigation when needed.';
   const progressLabel = progress ? `${progress.completed}/${progress.total} · ${pct(progress.percentage)}` : 'idle';
   const regionCount = new Set(project.nodes.map((node) => node.region).filter(Boolean)).size;
+  const n1Policy = useMemo(() => n1ExecutionPolicy(project), [project]);
+  const eligibleN1 = n1Policy.eligibleScenarios;
+  const routingLpEstimate = useMemo(() => estimateTrafficAllocationLP(project), [project]);
+  const capacityMilpEstimate = useMemo(() => estimateCapacityMILP(project, { includeBaseline: true, targetUtilizationPct: plan.constraints.targetUtilizationPct, budgetCostUnits: plan.constraints.budgetCostUnits ?? undefined, scenarioPatches: plan.changes.length ? [compiledPlanPatch] : [] }), [project, plan.constraints.targetUtilizationPct, plan.constraints.budgetCostUnits, plan.changes.length, compiledPlanPatch]);
+  const n1Guidance = n1Policy.guidance;
 
   return <main className="shell">
     <header className="topbar"><div><p className="eyebrow">InfraTwin</p><h1>{project.name}</h1><p className="subtitle">Plan and verify network changes before production. The base network stays canonical while humans and optimizer proposals collaborate inside one visible Change Plan.</p></div><div className="header-actions"><span data-testid="header-verdict" className={`status-chip ${authority === 'PASS' ? 'pass' : authority === 'FAIL' ? 'fail' : 'draft'}`}>{authority}</span><button data-testid="export-json" onClick={exportProject}>Export base JSON</button><button data-testid="import-json" onClick={() => setImportDialogOpen(true)}>Import network</button></div></header>
     <ImportNetworkDialog open={importDialogOpen} onClose={() => setImportDialogOpen(false)} onOpenProject={openImportedProject} />
     {importMessage && <div className="notice" role="status">{importMessage}</div>}{webmcpStatus === 'unsupported' && <div className="notice warning" role="status">WebMCP is not available in this browser. The collaborative planning workspace remains fully usable; WebMCP-specific coactivity expansion is intentionally deferred.</div>}
     <AnalysisJourney planLabel={ephemeralPatch ? `Counterexample replay: ${ephemeralPatch.name}` : plan.name} authority={authority} peakUtilizationPct={peak} violationCount={analysis.result.violations.length} primaryFailure={primaryFailure} candidateLabel={candidateLabel} verificationStatus={verificationStatus} nextStep={nextStep} />
-    <section className="summary-grid"><article><span>Base model</span><strong data-testid="base-model-hash" className="mono">{shortHash(modelHash(project))}</strong></article><article><span>Change Plan</span><strong data-testid="plan-hash" className="mono">{shortHash(changePlanHash(plan))} · {plan.changes.length} change(s)</strong></article><article><span>Planned peak</span><strong>{pct(peak)} / target {pct(plan.constraints.targetUtilizationPct)}</strong></article><article><span>Constraints</span><strong>{plan.constraints.budgetCostUnits === null ? 'No budget cap' : `Budget ${plan.constraints.budgetCostUnits}`} · N-1 {plan.constraints.requireN1 ? 'required' : 'optional'}</strong></article></section>
+    <section className="summary-grid"><article><span>Base model</span><strong data-testid="base-model-hash" className="mono">{shortHash(currentProjectHash)}</strong></article><article><span>Change Plan</span><strong data-testid="plan-hash" className="mono">{shortHash(currentPlanHash)} · {plan.changes.length} change(s)</strong></article><article><span>Planned peak</span><strong>{pct(peak)} / target {pct(plan.constraints.targetUtilizationPct)}</strong></article><article><span>Constraints</span><strong>{plan.constraints.budgetCostUnits === null ? 'No budget cap' : `Budget ${plan.constraints.budgetCostUnits}`} · N-1 {plan.constraints.requireN1 ? 'required' : 'optional'}</strong></article></section>
     <div className="network-scale-strip" data-testid="network-scale"><span><strong>{project.nodes.length}</strong> nodes</span><span><strong>{project.links.length}</strong> links</span><span><strong>{project.demands.length}</strong> demands</span><span><strong>{regionCount}</strong> regions</span>{project.metadata?.realisticSynthetic === true && <span>Realistic synthetic planning model</span>}</div>
+    <details className="panel compute-profile" data-testid="compute-profile" open={selectedScenarioId === 'national-backbone-scale-test'}><summary><span>Compute Profile / Scale</span><strong>{executionProfile.mode === 'worker' ? 'Worker preferred' : 'Main-thread fast path'} · {lastAnalysisRuntimeMs === null ? 'not run' : `${lastAnalysisRuntimeMs} ms`}</strong></summary><div className="compute-profile-grid">
+      <div><span>Network</span><strong>{project.nodes.length} nodes · {project.links.length} links · {project.demands.length} demands</strong><small>{executionProfile.shortestPathRuns} shortest-path runs · {executionProfile.estimatedWorkUnits.toLocaleString()} complexity units</small></div>
+      <div><span>Baseline / ChangePlan</span><strong>{analysisStatus === 'running' ? 'RUNNING' : analysisStatus === 'error' ? 'ERROR' : executionProfile.mode === 'worker' ? 'WORKER' : 'AVAILABLE'}</strong><small>Last execution: {lastAnalysisExecution ?? 'not run'}{lastAnalysisRuntimeMs === null ? '' : ` · ${lastAnalysisRuntimeMs} ms live`}</small></div>
+      <div><span>Resilience</span><strong>{n1Guidance}</strong><small>{eligibleN1} eligible link failures · recommended run cap {n1Policy.maxScenarios} · engine hard cap {N1_ENGINE_HARD_CAP} · {contingencies ? `${contingencies.completedScenarios}/${contingencies.totalEligibleScenarios} ${contingencies.status.toUpperCase()}` : 'not run'}</small></div>
+      <div><span>Routing LP</span><strong>{routingLpEstimate.recommended ? 'AVAILABLE' : 'NOT RECOMMENDED'}</strong><small>{routingLpEstimate.flowVariables.toLocaleString()} flow variables · {routingLpEstimate.constraints.toLocaleString()} constraints</small></div>
+      <div><span>Capacity MILP</span><strong>{capacityMilpEstimate.recommended ? 'AVAILABLE' : 'NOT RECOMMENDED'}</strong><small>{capacityMilpEstimate.decisionVariables.toLocaleString()} decisions × {capacityMilpEstimate.scenarioCount} scenario(s)</small></div>
+    </div></details>
 
     <section className="template-strip panel"><div><p className="eyebrow">Examples / Reference Networks</p><h2>Open a network, then author or load a Change Plan</h2></div><ScenarioSelector scenarios={networkTemplates} selectedId={selectedScenarioId} onSelect={loadNetworkTemplate} /></section>
 
@@ -413,25 +480,26 @@ export function Workbench() {
       </article>
 
       <aside data-testid="evidence-panel" className="panel evidence-panel"><div className="panel-heading compact"><div><p className="eyebrow">Analysis / Evidence</p><h2>{ephemeralPatch ? 'Counterexample replay' : authority === 'DRAFT' ? 'Plan not analyzed' : authority === 'STALE' ? 'Evidence stale' : `${authority} · ${analysis.result.violations.length} violation(s)`}</h2></div></div>
-        <div className="workflow-actions"><button data-testid="analyze-plan" className="primary" onClick={() => void analyzeCurrentPlan()}>Analyze Change Plan</button>{resilienceStatus !== 'running' && canRunResilience && <button data-testid="run-resilience" onClick={() => void runPlanN1()}>Run N-1 now</button>}{resilienceStatus === 'running' && <button data-testid="cancel-resilience" className="danger" onClick={() => directRunControllerRef.current?.abort()}>Cancel N-1</button>}{ephemeralPatch && <button data-testid="return-to-plan" onClick={() => { ephemeralRef.current = null; setEphemeralPatch(null); }}>Return to planned state</button>}</div>
+        <div className="workflow-actions">{analysisStatus !== 'running' ? <button data-testid="analyze-plan" className="primary" onClick={() => void analyzeCurrentPlan()}>Analyze Change Plan</button> : <button data-testid="cancel-analysis" className="danger" onClick={() => analysisControllerRef.current?.abort()}>Cancel analysis</button>}{resilienceStatus !== 'running' && canRunResilience && <button data-testid="run-resilience" onClick={() => void runPlanN1()}>Run N-1 now</button>}{resilienceStatus === 'running' && <button data-testid="cancel-resilience" className="danger" onClick={() => directRunControllerRef.current?.abort()}>Cancel N-1</button>}{ephemeralPatch && <button data-testid="return-to-plan" onClick={() => { ephemeralRef.current = null; setEphemeralPatch(null); }}>Return to planned state</button>}</div>
+        {analysisStatus !== 'idle' && <div data-testid="capacity-analysis-status" className={`compute-card ${analysisStatus}`}><span>Capacity analysis</span><strong>{analysisStatus.toUpperCase()} · {lastAnalysisExecution ?? executionProfile.mode}</strong><p>{analysisMessage}</p></div>}
         {publishedPlanAnalysis && <div data-testid="plan-analysis-status" className={`evidence-block ${analysisFresh ? '' : 'stale-evidence'}`}><span className="block-label">Plan evidence</span><strong>{analysisFresh ? publishedPlanAnalysis.verdict : 'STALE'} · target {pct(publishedPlanAnalysis.targetUtilizationPct)}</strong><p>{analysisFresh ? publishedPlanAnalysis.reasons.join(' ') : 'The base network or semantic Change Plan changed after this analysis. Re-run before relying on it.'}</p></div>}
         {resilienceStatus !== 'idle' && <div data-testid="resilience-status" className={`compute-card ${resilienceStatus}`}><span>N-1 execution</span><strong>{resilienceStatus} · {progressLabel}</strong><p>{resilienceMessage}</p></div>}
         {contingencies && n1Fresh && <div data-testid="resilience-evidence" className="evidence-block"><span className="block-label">N-1 evidence</span><strong>{contingencies.completedScenarios}/{contingencies.totalEligibleScenarios} failures tested · {contingencies.result.metrics.failingScenarios} failing</strong><p>Worst {String(contingencies.result.metrics.worstLinkId)} · peak {pct(Number(contingencies.result.metrics.worstPeakUtilizationPct))}</p></div>}
         <dl className="metrics evidence-metrics"><div><dt>Live routing</dt><dd>{analysis.routing.mode.toUpperCase()}</dd></div><div><dt>Live peak</dt><dd>{pct(peak)}</dd></div><div><dt>Unrouted</dt><dd>{analysis.routing.unroutedDemandIds.length}</dd></div><div><dt>Protected services</dt><dd>{plan.constraints.protectedServiceClassIds.join(', ') || 'none'}</dd></div></dl>
-        <div className="violation-list">{analysis.result.violations.length === 0 ? <p className="empty">No deterministic routing/capacity violations in the displayed planned snapshot.</p> : analysis.result.violations.map((violation) => <button className="violation" key={violation.id} onClick={() => selectViolation(violation)}><strong>{violation.type.replaceAll('_', ' ')}</strong><p>{violation.message}</p></button>)}</div>
-        {analysis.result.verdict === 'FAIL' && <button className="wide" onClick={inspectCurrentBottleneck}>Find min-cut bottleneck</button>}{bottleneck && <div className="evidence-block cut-block"><span className="block-label">Min-cut evidence</span><strong>{bottleneck.sourceId} → {bottleneck.targetId}: {gbps(bottleneck.cut.cutCapacityGbps)}</strong><p>Cut links: {bottleneck.cut.cutLinkIds.join(', ') || 'none'} · headroom {gbps(bottleneck.headroomGbps)}</p></div>}
-        <div className="optimizer-actions"><button data-testid="run-optimizer" className="primary" disabled={!optimizerReady || optimizerStatus === 'running'} onClick={() => void runOptimizer()}>Generate constrained mitigation</button><button data-testid="propose-deterministic" disabled={analysis.result.verdict !== 'FAIL'} onClick={quickMitigation}>Quick deterministic proposal</button>{candidate && <button data-testid="verify-candidate" disabled={candidateStale} onClick={() => void verifyCurrentCandidate()}>Verify proposal</button>}</div>
+        <div className="violation-list">{!analysisAuthoritative ? <p className="empty">Deterministic routing/capacity evidence has not been computed for this workload. Run Change Plan analysis to publish authoritative results.</p> : analysis.result.violations.length === 0 ? <p className="empty">No deterministic routing/capacity violations in the displayed planned snapshot.</p> : <>{visibleViolations.map((violation) => <button className="violation" key={violation.id} onClick={() => selectViolation(violation)}><strong>{violation.type.replaceAll('_', ' ')}</strong><p>{violation.message}</p></button>)}{visibleViolations.length < analysis.result.violations.length && <button type="button" className="secondary wide" data-testid="show-more-violations" onClick={() => setViolationDisplay({ resultId: analysis.result.id, count: Math.min(analysis.result.violations.length, visibleViolations.length + VIOLATION_RENDER_BATCH_SIZE) })}>Show more violations · {visibleViolations.length.toLocaleString()} / {analysis.result.violations.length.toLocaleString()} shown</button>}</>}</div>
+        {analysisAuthoritative && analysis.result.verdict === 'FAIL' && <button className="wide" onClick={inspectCurrentBottleneck}>Find min-cut bottleneck</button>}{bottleneck && <div className="evidence-block cut-block"><span className="block-label">Min-cut evidence</span><strong>{bottleneck.sourceId} → {bottleneck.targetId}: {gbps(bottleneck.cut.cutCapacityGbps)}</strong><p>Cut links: {bottleneck.cut.cutLinkIds.join(', ') || 'none'} · headroom {gbps(bottleneck.headroomGbps)}</p></div>}
+        <div className="optimizer-actions"><button data-testid="run-optimizer" className="primary" disabled={!optimizerReady || optimizerStatus === 'running'} onClick={() => void runOptimizer()}>Generate constrained mitigation</button><button data-testid="propose-deterministic" disabled={!analysisAuthoritative || analysis.result.verdict !== 'FAIL'} onClick={quickMitigation}>Quick deterministic proposal</button>{candidate && <button data-testid="verify-candidate" disabled={candidateStale} onClick={() => void verifyCurrentCandidate()}>Verify proposal</button>}</div>
         <div data-testid="optimizer-status" className={`compute-card ${optimizerStatus === 'error' ? 'error' : optimizerStatus === 'running' ? 'running' : 'complete'}`}><span>Optimizer</span><strong>{optimizerStatus} · HiGHS WASM</strong><p>{optimizerMessage}</p></div>
         {optimizerResult && <div data-testid="capacity-optimizer-result" className="evidence-block"><span className="block-label">Capacity MILP</span><strong>{optimizerResult.diagnostics.status} · {optimizerResult.diagnostics.proof}</strong><p>{optimizerResult.selectedUpgrades.length} upgrade(s) · objective {optimizerResult.diagnostics.objectiveValue ?? 'n/a'} · locks enforced: {optimizerResult.requirements.lockedLinkIds.join(', ') || 'none'}</p></div>}
         {candidateVerification && <div data-testid="candidate-verification" className={`comparison ${verificationFresh && candidateVerification.status === 'verified' ? 'comparison-pass' : ''}`}><span>Independent candidate verification</span><strong>{verificationFresh ? candidateVerification.status.toUpperCase() : 'STALE'}</strong><p>{verificationFresh ? (candidateVerification.status === 'verified' ? `Cost ${candidateVerification.calculatedCost}; current selected scenarios satisfy constraints.` : candidateVerification.violations.join(' ')) : 'Plan/proposal revision changed after verification. Re-run verification.'}</p></div>}
         {comparison && <div className="comparison"><span>Current planned state → optimizer candidate</span><strong>{comparison.before.result.verdict} → {comparison.after.result.verdict}</strong><p>Peak {pct(comparison.before.routing.peakUtilizationPct)} → {pct(comparison.after.routing.peakUtilizationPct)} · candidate is not applied to the base network.</p></div>}
-        {routingOptimization && <div className="evidence-block"><span className="block-label">Diagnostic traffic allocation LP</span><strong>{routingOptimization.diagnostics.status}</strong><p>Minimum max utilization {routingOptimization.maxUtilizationPct === null ? 'n/a' : pct(routingOptimization.maxUtilizationPct)}</p></div>}
+        {routingOptimization && <div data-testid="routing-lp-result" className="evidence-block"><span className="block-label">Diagnostic traffic allocation LP</span><strong>{routingOptimization.diagnostics.status}</strong><p>Minimum max utilization {routingOptimization.maxUtilizationPct === null ? 'n/a' : pct(routingOptimization.maxUtilizationPct)}</p></div>}
       </aside>
     </section>
 
     <section className="lower-grid phase35-lower"><article className="panel demand-panel"><div className="panel-heading"><div><p className="eyebrow">Planned traffic evidence</p><h2>Routes in the effective snapshot</h2></div></div><div className="demand-list">{snapshot.demands.length === 0 ? <p className="empty">No demands in the planned snapshot.</p> : snapshot.demands.map((demand) => { const route = routeByDemand.get(demand.id); const links = allRouteLinks(route); return <button className="demand-route standalone" key={demand.id} onClick={() => setSelectedEvidence({ type: 'route', id: `route:${demand.id}`, demandId: demand.id, linkIds: links })}><strong>{demand.id} · {demand.name ?? demand.id} · {gbps(demand.bandwidthGbps)}</strong><small>{route?.reachable ? `${route.equalCostPathCountExact} equal-cost path(s) · ${links.join(' / ') || 'local'}` : 'unreachable'} · {demand.serviceClassId}</small></button>; })}</div></article>
       <article className="panel contingency-panel"><div className="panel-heading"><div><p className="eyebrow">Counterexample replay</p><h2>{contingencies && n1Fresh ? 'Ranked N-1 cases' : 'No current ranking'}</h2></div></div>{contingencies && n1Fresh ? <div data-testid="contingency-list" className="contingency-list">{contingencies.cases.slice(0, 8).map((item, index) => <button data-testid={`counterexample-${item.linkId}`} key={item.linkId} className={ephemeralPatch?.id === item.patch.id ? 'active' : ''} onClick={() => replayContingency(item.linkId)}><span>#{index + 1} · {item.linkId}</span><strong>{item.verdict}</strong><small>score {item.score} · peak {pct(item.peakUtilizationPct)} · unsatisfied {gbps(item.unroutedDemandGbps)}</small></button>)}</div> : <p className="muted">Analyze a plan with N-1 required or run N-1 directly to generate replayable single-link counterexamples.</p>}</article>
-      <details className="panel agent-panel advanced-disclosure" data-testid="advanced-inspector"><summary><span>Advanced / Inspector</span><strong>{registeredTools.length} WebMCP capabilities · {compute.executionMode}</strong></summary><div className="advanced-body"><div className="panel-heading"><div><p className="eyebrow">Agent activity / WebMCP</p><h2>Existing capabilities over shared application services</h2></div><span className={`status-dot ${webmcpStatus}`} /></div><div className="tool-badges">{registeredTools.map((name) => <span key={name} className={['propose_change', 'show_counterexample', 'apply_candidate', 'discard_candidate', 'optimize_capacity_plan'].includes(name) ? 'mutating' : ''}>{name}</span>)}</div><p className="capability-note">Phase 3.5A preserves the existing WebMCP surface. Change Plan services and locks are shared internally; broader coactivity tool design is deferred.</p><button onClick={() => void runRoutingOptimizer()}>Solve diagnostic routing LP</button>{lastToolAnalysis && <p className="tool-result">Latest tool-published analysis: {lastToolAnalysis}</p>}<div className="activity-list">{activity.length === 0 ? <p className="muted">Tool calls appear here with classification and compact summaries.</p> : activity.map((event) => <div key={event.id} className="activity-row"><time>{event.startedAt.slice(11, 19)}</time><span className="activity-tool">{event.tool}</span><span className={`activity-kind ${event.readOnly ? 'readonly' : 'mutating'}`}>{event.readOnly ? 'read-only' : 'mutating'}</span><strong className={event.status}>{event.status === 'success' ? '✓' : event.status === 'cancelled' ? '■' : '✕'}</strong><small>{event.summary} · {event.durationMs} ms</small></div>)}</div></div></details>
+      <details className="panel agent-panel advanced-disclosure" data-testid="advanced-inspector"><summary><span>Advanced / Inspector</span><strong>{registeredTools.length} WebMCP capabilities · {compute.executionMode}</strong></summary><div className="advanced-body"><div className="panel-heading"><div><p className="eyebrow">Agent activity / WebMCP</p><h2>Existing capabilities over shared application services</h2></div><span className={`status-dot ${webmcpStatus}`} /></div><div className="tool-badges">{registeredTools.map((name) => <span key={name} className={['propose_change', 'show_counterexample', 'apply_candidate', 'discard_candidate', 'optimize_capacity_plan'].includes(name) ? 'mutating' : ''}>{name}</span>)}</div><p className="capability-note">Phase 3.5A preserves the existing WebMCP surface. Change Plan services and locks are shared internally; broader coactivity tool design is deferred.</p><button data-testid="routing-lp-action" onClick={() => void runRoutingOptimizer()}>Solve diagnostic routing LP</button><p data-testid="routing-lp-guidance" className="capability-note">{routingLpEstimate.reason}</p>{lastToolAnalysis && <p className="tool-result">Latest tool-published analysis: {lastToolAnalysis}</p>}<div className="activity-list">{activity.length === 0 ? <p className="muted">Tool calls appear here with classification and compact summaries.</p> : activity.map((event) => <div key={event.id} className="activity-row"><time>{event.startedAt.slice(11, 19)}</time><span className="activity-tool">{event.tool}</span><span className={`activity-kind ${event.readOnly ? 'readonly' : 'mutating'}`}>{event.readOnly ? 'read-only' : 'mutating'}</span><strong className={event.status}>{event.status === 'success' ? '✓' : event.status === 'cancelled' ? '■' : '✕'}</strong><small>{event.summary} · {event.durationMs} ms</small></div>)}</div></div></details>
     </section>
   </main>;
 }
