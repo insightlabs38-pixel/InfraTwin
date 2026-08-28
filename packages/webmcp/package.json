@@ -1,12 +1,13 @@
 {
   "name": "@infratwin/webmcp",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {
-    "@infratwin/application": "*",
     "@infratwin/model": "*",
-    "@infratwin/evidence": "*"
+    "@infratwin/graph-engine": "*",
+    "@infratwin/evidence": "*",
+    "@infratwin/optimizer": "*"
   }
 }
