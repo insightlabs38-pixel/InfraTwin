@@ -37,9 +37,6 @@
       ],
       "@infratwin/optimizer": [
         "packages/optimizer/src/index.ts"
-      ],
-      "@infratwin/application": [
-        "packages/application/src/index.ts"
       ]
     }
   },
