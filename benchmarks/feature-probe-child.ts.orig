@@ -50,7 +50,7 @@ try {
     const estimate = estimateCapacityMILP(project, requirements);
     if (operation === 'capacity-milp-build') {
       const buildStartedAt = performance.now();
-      const { problem } = buildCapacityUpgradeMILP(project, requirements);
+      const problem = buildCapacityUpgradeMILP(project, requirements);
       emit({ success: true, estimate, modelConstructionMs: performance.now() - buildStartedAt, problemBytes: Buffer.byteLength(problem, 'utf8') });
     } else {
       const result = await optimizeCapacityPlan(project, requirements, { timeLimitMs: 8_000 });
