@@ -19,7 +19,8 @@
     "test:e2e": "playwright test",
     "benchmark:scale:engine": "node --experimental-strip-types benchmarks/scale.ts",
     "benchmark:scale:browser": "playwright test --config=playwright.scale.config.ts",
-    "benchmark:scale:features": "node --experimental-strip-types benchmarks/feature-scale.ts"
+    "benchmark:scale:features": "node --experimental-strip-types benchmarks/feature-scale.ts",
+    "test:webmcp:native": "WEBMCP_NATIVE=1 playwright test e2e/phase35d-native-webmcp.spec.ts --headed --workers=1 --output=test-results-native --reporter=list"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
