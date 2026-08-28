@@ -37,7 +37,7 @@ try {
     const project = generateScaleProject({ id: 'B', name: 'routing-lp-envelope-probe', nodes: 160, links: 360, demands: 135, regions: 8, seed: 3671, routingMode: 'single-shortest-path', workload: 'concentrated-sources', sourceConcentration: 16, upgradeOptionDensity: 0.3 });
     const estimate = estimateTrafficAllocationLP(project);
     const buildStartedAt = performance.now();
-    const problem = buildTrafficAllocationLP(project);
+    const { problem } = buildTrafficAllocationLP(project);
     emit({ success: true, estimate, modelConstructionMs: performance.now() - buildStartedAt, problemBytes: Buffer.byteLength(problem, 'utf8') });
   } else if (operation === 'routing-lp-solve') {
     const project = generateScaleProject({ id: 'B', name: 'routing-lp-envelope-probe', nodes: 160, links: 360, demands: 135, regions: 8, seed: 3671, routingMode: 'single-shortest-path', workload: 'concentrated-sources', sourceConcentration: 16, upgradeOptionDensity: 0.3 });
