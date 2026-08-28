@@ -481,7 +481,7 @@ export function Workbench() {
           <strong data-testid="verdict">{ephemeralPatch ? analysis.result.verdict : authority}</strong>
         </div>
         <p>{ephemeralPatch ? `${ephemeralPatch.name} · ${analysis.result.violations.length} modeled violation${analysis.result.violations.length === 1 ? '' : 's'}.` : analysisStatusLabel}</p>
-        {ephemeralPatch && analysis.result.violations.length > 0 && <small>Replay issues: {analysis.result.violations.slice(0, 8).map((item) => item.linkId ?? item.demandId ?? item.code).filter(Boolean).join(', ')}</small>}
+        {ephemeralPatch && analysis.result.violations.length > 0 && <small>Replay issues: {analysis.result.violations.slice(0, 8).map((item) => item.linkId ?? item.demandId ?? item.message).filter(Boolean).join(', ')}</small>}
         {!ephemeralPatch && authority === 'FAIL' && primaryFailure && <small>Primary issue: {primaryFailure}</small>}
       </div>
       {analysisStatus !== 'idle' && <small data-testid="capacity-analysis-status">Analysis {analysisStatus} · {lastAnalysisExecution ?? executionProfile.mode}{lastAnalysisRuntimeMs === null ? '' : ` · ${lastAnalysisRuntimeMs} ms measured on this browser run`}</small>}
