@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 async function openFlagship(page: import('@playwright/test').Page) {
   await page.goto('/');
-  await expect(page.getByTestId('scenario-continental-service-network')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('network-selector')).toHaveValue('continental-service-network');
   await expect(page.getByTestId('topology-workspace')).toBeVisible();
   await expect(page.getByTestId('network-scale')).toContainText('128');
   await expect(page.getByTestId('network-scale')).toContainText('304');
@@ -52,7 +52,9 @@ test('Phase 3.5B 2: flagship link selection authors generic ChangePlan action an
 
 test('Phase 3.5B 3: large-graph LOD keeps priority semantics while reducing normal labels', async ({ page }) => {
   await openFlagship(page);
+  await page.getByTestId('nav-plans').click();
   await page.getByTestId('load-plan-template').click();
+  await page.getByTestId('nav-network').click();
   await page.getByTestId('analyze-plan').click();
   await expect(page.getByTestId('plan-analysis-status')).toContainText('FAIL');
   const canvas = page.getByTestId('topology-canvas');
@@ -89,6 +91,8 @@ test('Phase 3.5B 5: upgrade catalog editor changes canonical design space explic
   await openFlagship(page);
   await searchAndChoose(page, 'BB-SE-CE-01', 'search-result-link-BB-SE-CE-01');
   const before = await page.getByTestId('base-model-hash').textContent();
+  await page.getByTestId('nav-settings').click();
+  await page.getByTestId('settings-upgrade-link').selectOption('BB-SE-CE-01');
   await expect(page.getByTestId('upgrade-profile-editor')).toContainText(/not a Change Plan action/i);
   await expect(page.getByTestId('upgrade-profile-editor')).toContainText(/cost units/i);
   await page.getByLabel('Upgrade capacity 1').fill('130');
@@ -100,12 +104,14 @@ test('Phase 3.5B 5: upgrade catalog editor changes canonical design space explic
   await page.getByTestId('apply-upgrade-profile').click();
   await expect(page.getByTestId('base-model-hash')).not.toHaveText(before ?? '');
   await expect(page.getByRole('status').first()).toContainText(/canonical network-assumption edit/i);
-  await expect(page.getByTestId('plan-change-list')).toContainText(/Select a link\/node or add traffic/i);
+  await expect(page.getByTestId('plan-change-list')).toContainText(/No planned changes/i);
 });
 
 test('Phase 3.5B 6: presentation interactions do not stale analyzed evidence or change model/plan hashes', async ({ page }) => {
   await openFlagship(page);
+  await page.getByTestId('nav-plans').click();
   await page.getByTestId('load-plan-template').click();
+  await page.getByTestId('nav-network').click();
   await page.getByTestId('analyze-plan').click();
   await expect(page.getByTestId('plan-analysis-status')).toContainText('FAIL');
   const baseHash = await page.getByTestId('base-model-hash').textContent();

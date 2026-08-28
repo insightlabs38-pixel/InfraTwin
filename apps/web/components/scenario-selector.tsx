@@ -3,27 +3,19 @@ import type { ScenarioDefinition } from '@infratwin/scenarios';
 type ScenarioSelectorProps = {
   scenarios: ScenarioDefinition[];
   selectedId: string;
+  selectedLabel?: string;
   onSelect: (id: ScenarioDefinition['id']) => void;
 };
 
-export function ScenarioSelector({ scenarios, selectedId, onSelect }: ScenarioSelectorProps) {
+export function ScenarioSelector({ scenarios, selectedId, selectedLabel, onSelect }: ScenarioSelectorProps) {
+  const imported = !scenarios.some((item) => item.id === selectedId);
   return (
-    <div className="scenario-list" role="list" aria-label="Example and reference networks">
-      {scenarios.map((item) => (
-        <button
-          key={item.id}
-          type="button"
-          role="listitem"
-          data-testid={`scenario-${item.id}`}
-          className={`scenario-card ${selectedId === item.id ? 'active' : ''}`}
-          aria-pressed={selectedId === item.id}
-          onClick={() => onSelect(item.id)}
-        >
-          <span className="scenario-card-kicker">{item.kind === 'flagship' ? 'Realistic synthetic model' : item.kind === 'blank' ? 'Workspace' : 'Reference network'}</span>
-          <strong>{item.title}</strong>
-          <small>{item.description}</small>
-        </button>
-      ))}
-    </div>
+    <label className="network-selector-control">
+      <span>Network</span>
+      <select data-testid="network-selector" aria-label="Current network" value={selectedId} onChange={(event) => onSelect(event.target.value as ScenarioDefinition['id'])}>
+        {imported && <option value={selectedId}>{selectedLabel ?? 'Imported network'}</option>}
+        {scenarios.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
+      </select>
+    </label>
   );
 }

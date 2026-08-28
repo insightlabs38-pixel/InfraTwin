@@ -69,8 +69,11 @@ async function openHarnessedWorkbench(page: Page): Promise<void> {
   await installModelContextHarness(page);
   await page.goto('/');
   await expect(page.getByTestId('topology-canvas')).toBeVisible();
-  await expect(page.getByTestId('analysis-journey')).toBeVisible();
+  await expect(page.getByTestId('application-shell')).toBeVisible();
 }
+
+async function selectNetwork(page: Page, id: string): Promise<void> { await page.getByTestId('network-selector').selectOption(id); await expect(page.getByTestId('network-selector')).toHaveValue(id); }
+async function loadTemplate(page: Page): Promise<void> { await page.getByTestId('nav-plans').click(); await page.getByTestId('load-plan-template').click(); await page.getByTestId('nav-network').click(); }
 
 async function importJsonThroughReview(page: Page, path: string): Promise<void> {
   await page.getByTestId('import-json').click();
@@ -139,7 +142,7 @@ test('browser WebMCP lifecycle registers only executable capabilities and revoke
   expect(initial.definitions.run_contingencies.readOnlyHint).toBe(true);
   expect(initial.definitions.inspect_network.untrustedContentHint).toBe(true);
 
-  await page.getByTestId('scenario-maintenance-trap').click();
+  await selectNetwork(page, 'maintenance-trap');
   const before = await executeTool(page, 'inspect_network');
   expect(before.ok).toBe(true);
   const beforeSummary = before.result as { modelHash: string; scenarioHash: string };
@@ -150,18 +153,18 @@ test('browser WebMCP lifecycle registers only executable capabilities and revoke
   expect((after.result as { modelHash: string }).modelHash).toBe(beforeSummary.modelHash);
   expect((after.result as { scenarioHash: string }).scenarioHash).toBe(beforeSummary.scenarioHash);
 
-  await page.getByTestId('scenario-maintenance-trap').click();
-  await page.getByTestId('load-plan-template').click();
+  await selectNetwork(page, 'maintenance-trap');
+  await loadTemplate(page);
   await page.getByTestId('analyze-plan').click();
   await expect(page.getByTestId('verdict')).toHaveText('FAIL');
   await expectActive(page, ['inspect_violation', 'find_bottlenecks']);
   await expectInactive(page, ['show_counterexample']);
 
-  await page.getByTestId('scenario-resilience-gap').click();
+  await selectNetwork(page, 'resilience-gap');
   await page.getByTestId('run-resilience').click();
   await expect(page.getByTestId('resilience-status')).toContainText('complete', { timeout: 30_000 });
   await expectActive(page, ['show_counterexample']);
-  await page.getByTestId('clear-plan').click();
+  await page.getByTestId('nav-plans').click(); await page.getByTestId('clear-plan').click(); await page.getByTestId('nav-network').click();
   await expectInactive(page, ['show_counterexample']);
   const resetSnapshot = await snapshot(page);
   expect(resetSnapshot.events.some((event) => event.type === 'revoke' && event.name === 'show_counterexample' && event.aborted)).toBe(true);
@@ -169,8 +172,8 @@ test('browser WebMCP lifecycle registers only executable capabilities and revoke
 
 test('browser WebMCP candidate lifecycle is non-applying until explicit apply and stale candidate capabilities revoke', async ({ page }) => {
   await openHarnessedWorkbench(page);
-  await page.getByTestId('scenario-growth-wall').click();
-  await page.getByTestId('load-plan-template').click();
+  await selectNetwork(page, 'growth-wall');
+  await loadTemplate(page);
   await page.getByTestId('analyze-plan').click();
   await expect(page.getByTestId('verdict')).toHaveText('FAIL');
   await expect(page.getByTestId('optimizer-status')).toContainText(/ready|HiGHS WASM/i, { timeout: 30_000 });
