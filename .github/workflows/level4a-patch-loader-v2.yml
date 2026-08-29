@@ -1,0 +1,73 @@
+name: Level4A Patch Loader v2
+
+on:
+  push:
+    branches:
+      - tmp/level4a-patch-loader
+    paths:
+      - '.github/workflows/level4a-patch-loader-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout frozen Level 4A target
+        uses: actions/checkout@v4
+        with:
+          ref: tmp/level-4a-adaptive-design
+          fetch-depth: 0
+
+      - name: Reconstruct and validate full Level 4A patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_TARGET="4cc80316dcc8338ea8018b7a9edc6a97c580c887"
+          ACTUAL_TARGET="$(git rev-parse HEAD)"
+          if [ "$ACTUAL_TARGET" != "$EXPECTED_TARGET" ]; then
+            echo "Refusing to apply: target moved from frozen baseline $EXPECTED_TARGET to $ACTUAL_TARGET" >&2
+            exit 1
+          fi
+
+          git fetch origin tmp/level4a-patch-loader:refs/remotes/origin/tmp/level4a-patch-loader
+          : > /tmp/level4a-v2.b64
+          git show origin/tmp/level4a-patch-loader:.level4a-loader-v2/part-01.b64 >> /tmp/level4a-v2.b64
+          git show origin/tmp/level4a-patch-loader:.level4a-loader-v2/part-02a.b64 >> /tmp/level4a-v2.b64
+          git show origin/tmp/level4a-patch-loader:.level4a-loader-v2/part-02b.b64 >> /tmp/level4a-v2.b64
+          for n in 03 04 05 06 07 08; do
+            git show "origin/tmp/level4a-patch-loader:.level4a-loader-v2/part-${n}.b64" >> /tmp/level4a-v2.b64
+          done
+
+          base64 -d /tmp/level4a-v2.b64 > /tmp/level4a-v2.patch.xz
+          echo "b53c389cc89d8262fc2b75f25d7a2b6b245637d470898f8e5439f4b02e449804  /tmp/level4a-v2.patch.xz" | sha256sum -c -
+          xz -dc /tmp/level4a-v2.patch.xz > /tmp/level4a-v2.patch
+
+          git apply --check /tmp/level4a-v2.patch
+          git apply /tmp/level4a-v2.patch
+          git diff --check
+
+          test -f packages/optimizer/src/level4-design.ts
+          test -f packages/scenarios/src/level4-reference.ts
+          test -f tests/level4a-adaptive-design.test.ts
+          test -f e2e/level4a-adaptive-design.spec.ts
+          test -f benchmarks/level4-design.ts
+
+          if ! git diff --quiet -- .github/workflows/ci.yml; then
+            echo "Refusing to publish: code patch unexpectedly modifies .github/workflows/ci.yml" >&2
+            exit 1
+          fi
+
+      - name: Create one coherent Level 4A implementation commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git diff --cached --stat
+          git commit -m "feat(level4a): implement adaptive network design optimization"
+          git push origin HEAD:tmp/level-4a-adaptive-design
