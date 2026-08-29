@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ChangePlan, NetworkProject } from '@infratwin/model';
+import type { ChangePlan, NetworkProject, PlanChange } from '@infratwin/model';
 import { describePlanChange } from '@infratwin/model';
 import { CandidateProposalList } from './candidate-proposal-list';
 import { DemandPlanEditor } from './demand-plan-editor';
@@ -29,6 +29,15 @@ export function ChangePlanPanel(props: Props) {
   useEffect(() => setPlanNameDraft(plan.name), [plan.id, plan.name]);
   const pending = plan.proposals.filter((proposal) => proposal.state === 'pending').length;
   const lockCount = plan.restrictions.lockedLinkIds.length + plan.restrictions.lockedNodeIds.length;
+  const visibleChangeSummary = (item: PlanChange) => item.type === 'demand_growth' && item.target.ids.length > 4
+    ? `Grow ${item.target.ids.length} demands by ${Math.round((item.payload.multiplier - 1) * 1000) / 10}%`
+    : describePlanChange(item);
+  const changeProvenance = (changeId: string, actor: 'human' | 'agent') => {
+    if (actor === 'human') return 'Human-authored';
+    const proposal = plan.proposals.find((item) => item.change.id === changeId && item.state === 'accepted');
+    const humanAccepted = proposal && plan.history.some((event) => event.action === 'accepted_proposal' && event.actor === 'human' && event.relatedId === proposal.id);
+    return humanAccepted ? 'Agent/optimizer proposal accepted by human' : 'Agent-authored';
+  };
 
   return (
     <aside className="plan-panel" data-testid="change-plan-panel" aria-label="Current Change Plan">
@@ -39,7 +48,7 @@ export function ChangePlanPanel(props: Props) {
 
       <section className="compact-section" data-testid="plan-change-list">
         <div className="section-row"><span>Changes</span><strong>{plan.changes.length}</strong></div>
-        {plan.changes.length === 0 ? <p className="muted compact-copy">No planned changes.</p> : <div className="compact-list">{plan.changes.map((item) => <div className={`plan-change-row actor-${item.actor}`} key={item.id}><div><strong>{describePlanChange(item)}</strong><small>{item.actor === 'agent' ? 'Agent-authored' : 'Human-authored'}</small></div><button aria-label={`Remove ${item.id}`} data-testid={`remove-plan-change-${item.id}`} onClick={() => props.onRemoveChange(item.id)}>×</button></div>)}</div>}
+        {plan.changes.length === 0 ? <p className="muted compact-copy">No planned changes.</p> : <div className="compact-list">{plan.changes.map((item) => <div className={`plan-change-row actor-${item.actor}`} key={item.id}><div><strong>{visibleChangeSummary(item)}</strong><small>{changeProvenance(item.id, item.actor)}</small></div><button aria-label={`Remove ${item.id}`} data-testid={`remove-plan-change-${item.id}`} onClick={() => props.onRemoveChange(item.id)}>×</button></div>)}</div>}
       </section>
 
       <details className="compact-disclosure" data-testid="plan-constraints">

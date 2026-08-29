@@ -284,3 +284,48 @@ test('M3.5D tool annotations and activity distinguish reads, workspace mutations
   ]);
   reg.dispose();
 });
+
+test('M3.5D security boundary validates raw handler inputs before shared-state mutation and keeps selection what-ifs read-only', async () => {
+  const h = makeHarness();
+  const host = createModelContext();
+  const registration = await registerCollaborativeTools(host.context, h.service);
+  const initialHash = changePlanHash(h.plan);
+
+  await assert.rejects(
+    Promise.resolve(host.tools.get('add_plan_change')!.execute({ type: 'set_link_capacity', linkId: 'L3', capacityGbps: '20' })),
+    /finite number/i,
+  );
+  assert.equal(changePlanHash(h.plan), initialHash, 'schema-bypassing numeric strings cannot mutate the ChangePlan');
+
+  await assert.rejects(
+    Promise.resolve(host.tools.get('set_plan_constraints')!.execute({ targetUtilizationPct: 70, requireN1: 'false' })),
+    /boolean/i,
+  );
+  assert.equal(h.plan.constraints.targetUtilizationPct, 80, 'compound constraint input is validated atomically before any mutation');
+  assert.equal(h.plan.constraints.requireN1, false);
+
+  await assert.rejects(
+    Promise.resolve(host.tools.get('set_plan_constraints')!.execute({ protectedServiceClassIds: ['not-a-service-class'] })),
+    /unknown protected service class/i,
+  );
+  assert.deepEqual(h.plan.constraints.protectedServiceClassIds, []);
+
+  await assert.rejects(
+    Promise.resolve(host.tools.get('set_plan_restriction')!.execute({ kind: 'router', id: 'L3', locked: true })),
+    /kind must be link or node/i,
+  );
+  assert.deepEqual(h.plan.restrictions.lockedLinkIds, []);
+
+  await assert.rejects(
+    Promise.resolve(host.tools.get('run_contingencies')!.execute({ maxScenarios: 1.5 })),
+    /positive integer/i,
+  );
+
+  h.selection = { kind: 'demand', id: 'D1' };
+  const beforeSimulation = changePlanHash(h.plan);
+  const simulated = await host.tools.get('simulate_change')!.execute({ type: 'demand_growth', target: 'selection', multiplier: 1.1 }) as { verdict: string };
+  assert.ok(['PASS', 'FAIL'].includes(simulated.verdict));
+  assert.equal(changePlanHash(h.plan), beforeSimulation, 'selection-driven hypothetical remains read-only');
+
+  registration.dispose();
+});
