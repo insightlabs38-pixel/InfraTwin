@@ -77,11 +77,12 @@ export class CollaborativeWorkspaceService {
     }else if(input.type==='add_demand'){
       c={id,actor,type:'add_demand',target:{kind:'demand',id:input.demand.id},payload:{demand:clone(input.demand)},createdAt:now};
     }else{
-      const multiplier=input.multiplier;
+      const growth=input as Extract<PlanChangeInput,{type:'demand_growth'}>;
+      const multiplier=growth.multiplier;
       if(!Number.isFinite(multiplier)||multiplier<0)throw new Error('multiplier must be >= 0');
-      const ids:string[]=input.target==='selection'
+      const ids:string[]=growth.target==='selection'
         ? [this.target('demand',undefined,'selection')]
-        : [...new Set<string>(input.demandIds??[])].sort();
+        : [...new Set<string>(growth.demandIds??[])].sort();
       if(!ids.length)throw new Error('At least one demand id or a current demand selection is required.');
       for(const x of ids)if(!p.demands.some(d=>d.id===x))throw new Error(`Unknown demand ${x}`);
       c={id,actor,type:'demand_growth',target:{kind:'demands',ids},payload:{multiplier},createdAt:now};
