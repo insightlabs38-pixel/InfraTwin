@@ -47,12 +47,60 @@ test('M3.5D native WebMCP host — real document.modelContext discovery/executio
   const browserVersion = browser.version();
 
   const available = await page.evaluate(() => {
-    const context = (document as Document & { modelContext?: { getTools?: unknown; executeTool?: unknown } }).modelContext;
-    return { hasContext: Boolean(context), getTools: typeof context?.getTools, executeTool: typeof context?.executeTool };
+    const context = (document as Document & { modelContext?: { getTools?: unknown; executeTool?: unknown; registerTool?: unknown } }).modelContext;
+    return {
+      hasContext: Boolean(context),
+      registerTool: typeof context?.registerTool,
+      getTools: typeof context?.getTools,
+      executeTool: typeof context?.executeTool,
+      originAgentCluster: (window as Window & { originAgentCluster?: boolean }).originAgentCluster ?? false,
+      secureContext: window.isSecureContext,
+    };
   });
-  expect(available, `Native WebMCP unavailable in Chromium ${browserVersion}; CI must run headed with WebMCP flags.`).toEqual({ hasContext: true, getTools: 'function', executeTool: 'function' });
+  expect(available, `Native WebMCP unavailable in Chromium ${browserVersion}; CI must run headed with WebMCP flags and an origin-keyed agent cluster.`).toEqual({
+    hasContext: true,
+    registerTool: 'function',
+    getTools: 'function',
+    executeTool: 'function',
+    originAgentCluster: true,
+    secureContext: true,
+  });
 
-  await expect.poll(() => nativeToolNames(page), { timeout: 20_000 }).toEqual(expect.arrayContaining(['inspect_workspace', 'inspect_selection', 'add_plan_change', 'analyze_plan']));
+  const registrationProbe = await page.evaluate(async () => {
+    type Tool = { name: string };
+    type Ctx = {
+      registerTool(tool: { name: string; description: string; inputSchema: Record<string, unknown>; execute(): unknown }, options?: { signal?: AbortSignal }): Promise<void>;
+      getTools(): Promise<Tool[]>;
+    };
+    const context = (document as Document & { modelContext?: Ctx }).modelContext;
+    if (!context?.registerTool || !context.getTools) return { registered: false, error: 'registration API unavailable' };
+    const controller = new AbortController();
+    try {
+      await context.registerTool({
+        name: '__infratwin_native_registration_probe',
+        description: 'InfraTwin native WebMCP registration contract probe.',
+        inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        execute: async () => ({ ok: true }),
+      }, { signal: controller.signal });
+      const registered = (await context.getTools()).some((tool) => tool.name === '__infratwin_native_registration_probe');
+      return { registered, error: null };
+    } catch (error) {
+      return { registered: false, error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) };
+    } finally {
+      controller.abort();
+    }
+  });
+  expect(registrationProbe, `Native registerTool probe failed: ${registrationProbe.error ?? 'probe was not discoverable'}`).toEqual({ registered: true, error: null });
+
+  await expect.poll(async () => {
+    const state = await page.evaluate(async () => {
+      const context = (document as Document & { modelContext?: { getTools(): Promise<Array<{ name: string }>> } }).modelContext;
+      const registrationError = (window as Window & { __infratwinWebMCPRegistrationError?: string }).__infratwinWebMCPRegistrationError ?? null;
+      return { tools: context?.getTools ? (await context.getTools()).map((tool) => tool.name).sort() : [], registrationError };
+    });
+    if (state.registrationError) throw new Error(`InfraTwin native WebMCP registration failed: ${state.registrationError}`);
+    return state.tools;
+  }, { timeout: 20_000 }).toEqual(expect.arrayContaining(['inspect_workspace', 'inspect_selection', 'add_plan_change', 'analyze_plan']));
   const initialTools = await nativeToolNames(page);
   expect(initialTools).not.toContain('apply_candidate');
   expect(initialTools).not.toContain('inspect_violation');
