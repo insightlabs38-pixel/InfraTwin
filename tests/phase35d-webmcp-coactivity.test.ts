@@ -30,7 +30,7 @@ import {
   type ModelContextLike,
   type ToolActivityEvent,
   type WebMCPTool,
-} from '../packages/webmcp/src/index.ts';
+} from '../packages/webmcp/src/m35d.ts';
 
 const T0 = '2026-08-28T16:00:00.000Z';
 let seq = 0;
