@@ -5,6 +5,7 @@ import {
   applyCandidatePlan,
   applyScenario,
   cloneProject,
+  createChangePlan,
   modelHash,
   scenarioHash,
   validateNetworkProject,
@@ -23,17 +24,15 @@ import {
   loadMaintenanceTrap,
   loadResilienceGap,
 } from '../packages/scenarios/src/index.ts';
+import { CollaborativeWorkspaceService } from '../packages/application/src/index.ts';
 import {
-  BASE_TOOL_NAMES,
-  CANDIDATE_TOOL_NAMES,
-  inspectDemands,
-  registerBaseTools,
-  registerCandidateTools,
-  type InfraTwinToolServices,
+  CORE_TOOL_NAMES,
+  PROPOSAL_TOOL_NAMES,
+  registerCollaborativeTools,
   type ModelContextLike,
   type ToolActivityEvent,
   type WebMCPTool,
-} from '../packages/webmcp/src/index.ts';
+} from '../packages/webmcp/src/m35d.ts';
 
 test('bundled scenarios preserve the three Level 1 demos plus blank alongside the Phase 3.5B flagship', () => {
   const scenarios = listBundledScenarios();
@@ -117,7 +116,7 @@ test('Growth Wall deterministic capacity candidate restores 20% headroom at +40%
   const comparison = compareCandidate(project, candidate, patch);
   assert.equal(comparison.before.result.verdict, 'FAIL');
   assert.equal(comparison.after.result.verdict, 'PASS');
-  assert.ok(comparison.after.routing.linkUtilizationPct.G2 < 80);
+  assert.ok(comparison.after.routing.peakUtilizationPct < 80);
 });
 
 test('Resilience Gap N-1 ranks R2 as worst and exposes both southern overloads', () => {
@@ -143,99 +142,102 @@ test('Resilience Gap mitigation upgrades both overloaded southern links and impr
   assert.ok(comparison.after.routing.peakUtilizationPct < 80);
 });
 
-test('inspect_demands reports current active scenario values and routes', () => {
+test('inspect_selection demand view reports current shared ChangePlan demand values and deterministic routes', async () => {
   const project = loadGrowthWall();
-  const patch: ScenarioPatch = {
-    id: 'growth-inspect', name: 'Growth inspect', disabledNodeIds: [], disabledLinkIds: [],
-    demandMultipliers: [{ demandId: 'GD1', multiplier: 1.4 }], addedDemands: [], linkCapacityOverrides: [],
-  };
-  const summary = inspectDemands(project, patch);
-  const demand = summary.demands.find((item) => item.id === 'GD1')!;
-  assert.equal(demand.bandwidthGbps, 11.2);
-  assert.deepEqual(demand.routeLinkIds, ['G1', 'G2', 'G3']);
+  let plan = createChangePlan(project, 'Growth inspect');
+  let analysis = null as ReturnType<typeof runScenarioCapacityAnalysis> | null;
+  const service = new CollaborativeWorkspaceService({
+    getProject: () => project,
+    getPlan: () => plan,
+    setPlan: (next) => { plan = next; },
+    getSelection: () => ({ kind: 'demand', id: 'GD1' }),
+    getAnalysis: () => analysis ? { planHash: '', stamp: { baseModelHash: modelHash(project), planHash: '' }, verdict: analysis.result.verdict, capacity: analysis, reasons: [] } as any : null,
+  });
+  service.addPlanChange({ type: 'demand_growth', demandIds: ['GD1'], multiplier: 1.4 }, 'human');
+  await service.analyzePlan(undefined, 'human');
+  const selected = service.inspectSelection();
+  assert.equal(selected.kind, 'demand');
+  assert.equal(selected.id, 'GD1');
+  assert.ok(selected.planChanges.some((item) => item.summary.includes('40%')));
 });
 
-test('WebMCP base tools expose schemas/annotations and drive shared application services', async () => {
-  let project = loadMaintenanceTrap();
-  let activePatch: ScenarioPatch | null = null;
-  let candidate: CandidatePlan | null = null;
+test('WebMCP core tools expose shared-state schemas/annotations and never create hidden persistent scenarios', async () => {
+  const project = loadMaintenanceTrap();
+  let plan = createChangePlan(project, 'Shared plan');
   const tools = new Map<string, WebMCPTool>();
   const signals = new Map<string, AbortSignal | undefined>();
   const activities: ToolActivityEvent[] = [];
-  const context: ModelContextLike = { registerTool(tool, options) { tools.set(tool.name, tool); signals.set(tool.name, options?.signal); } };
-  const services: InfraTwinToolServices = {
-    getProject: () => project,
-    setProject: (next) => { project = next; },
-    getActiveScenario: () => activePatch,
-    setActiveScenario: (next) => { activePatch = next; },
-    publishCapacityAnalysis: () => {},
-    publishContingencyAnalysis: () => {},
-    getCandidate: () => candidate,
-    setCandidate: (next) => { candidate = next; },
-    publishCandidateComparison: () => {},
-    onActivity: (event) => activities.push(event),
-  };
-
-  const cleanup = await registerBaseTools(context, services);
-  assert.deepEqual([...tools.keys()], [...BASE_TOOL_NAMES]);
-  assert.equal(tools.get('inspect_network')?.annotations?.readOnlyHint, true);
-  assert.equal(tools.get('inspect_demands')?.annotations?.readOnlyHint, true);
+  const service = new CollaborativeWorkspaceService({ getProject: () => project, getPlan: () => plan, setPlan: (next) => { plan = next; } });
+  const context: ModelContextLike = { registerTool(tool, options) { tools.set(tool.name, tool); signals.set(tool.name, options?.signal); options?.signal?.addEventListener('abort', () => tools.delete(tool.name), { once: true }); } };
+  const registration = await registerCollaborativeTools(context, service, { onActivity: (event) => activities.push(event) });
+  for (const name of CORE_TOOL_NAMES) assert.ok(tools.has(name));
+  assert.equal(tools.get('inspect_workspace')?.annotations?.readOnlyHint, true);
   assert.equal(tools.get('simulate_change')?.annotations?.readOnlyHint, true);
-  assert.equal(tools.get('run_capacity_analysis')?.annotations?.readOnlyHint, true);
-  assert.equal(tools.get('propose_change')?.annotations?.readOnlyHint, false);
-
-  const simulated = await tools.get('simulate_change')!.execute({ disabledLinkIds: ['L1'], name: 'Agent maintenance' }) as ReturnType<typeof runScenarioCapacityAnalysis>;
-  assert.equal(simulated.result.verdict, 'FAIL');
-  assert.equal(services.getActiveScenario(), null, 'read-only simulation must not change active shared scenario');
-  assert.equal(project.links.find((link) => link.id === 'L1')?.available, true);
+  assert.equal(tools.get('add_plan_change')?.annotations?.readOnlyHint, false);
   assert.equal(tools.get('simulate_change')?.annotations?.untrustedContentHint, true);
-  await tools.get('propose_change')!.execute({ strategy: 'set_link_capacity', linkId: 'L3', capacityGbps: 15 });
-  assert.ok(candidate);
-  assert.equal(services.getCandidate()?.commands[0]?.args.linkId, 'L3');
-  assert.equal(activities.at(-1)?.tool, 'propose_change');
-  assert.equal(activities.at(-1)?.status, 'success');
-  cleanup();
-  for (const name of BASE_TOOL_NAMES) assert.equal(signals.get(name)?.aborted, true);
+
+  const beforeHash = modelHash(project);
+  const simulated = await tools.get('simulate_change')!.execute({ type: 'disable_link', linkId: 'L1' }) as { verdict: string; peakUtilizationPct: number };
+  assert.equal(simulated.verdict, 'FAIL');
+  assert.equal(modelHash(project), beforeHash);
+  assert.equal(plan.changes.length, 0, 'read-only simulation cannot create hidden shared state');
+
+  await tools.get('add_plan_change')!.execute({ type: 'disable_link', linkId: 'L1' });
+  assert.equal(plan.changes.length, 1);
+  assert.equal(plan.changes[0].actor, 'agent');
+  assert.equal(activities.at(-1)?.tool, 'add_plan_change');
+  registration.dispose();
+  for (const signal of signals.values()) assert.equal(signal?.aborted, true);
 });
 
-test('candidate WebMCP tools compare, apply, and discard against current shared state', async () => {
-  let project = loadMaintenanceTrap();
-  const patch = getScenarioDefinition('maintenance-trap').recommendedPatch!;
-  let activePatch: ScenarioPatch | null = patch;
-  let candidate: CandidatePlan | null = proposeCapacityMitigation(project, patch, 20)!;
+test('proposal WebMCP tools operate only on visible ChangePlan proposal state and cannot apply the canonical network', async () => {
+  const project = loadMaintenanceTrap();
+  let plan = createChangePlan(project, 'Proposal review');
+  let candidate: CandidatePlan | null = null;
+  let analysis: ReturnType<typeof import('../packages/evidence/src/index.ts')['analyzeChangePlan']> | null = null as any;
   const tools = new Map<string, WebMCPTool>();
-  const activities: ToolActivityEvent[] = [];
-  const context: ModelContextLike = { registerTool(tool) { tools.set(tool.name, tool); } };
-  const services: InfraTwinToolServices = {
-    getProject: () => project,
-    setProject: (next) => { project = next; },
-    getActiveScenario: () => activePatch,
-    setActiveScenario: (next) => { activePatch = next; },
-    publishCapacityAnalysis: () => {},
-    publishContingencyAnalysis: () => {},
-    getCandidate: () => candidate,
-    setCandidate: (next) => { candidate = next; },
-    publishCandidateComparison: () => {},
-    onActivity: (event) => activities.push(event),
-  };
-  const cleanup = await registerCandidateTools(context, services);
-  assert.deepEqual([...tools.keys()], [...CANDIDATE_TOOL_NAMES]);
-  const comparison = await tools.get('compare_candidate')!.execute({}) as ReturnType<typeof compareCandidate>;
-  assert.equal(comparison.after.result.verdict, 'PASS');
-  await tools.get('apply_candidate')!.execute({});
-  assert.equal(candidate, null);
-  assert.equal(project.links.find((link) => link.id === 'L3')?.capacityGbps, 15);
-  assert.equal(runScenarioCapacityAnalysis(project, patch).result.verdict, 'PASS');
-  assert.equal(activities.some((event) => event.tool === 'apply_candidate'), true);
-  cleanup();
-
-  candidate = proposeCapacityMitigation(loadResilienceGap(), runLinkContingencies(loadResilienceGap()).worst!.patch, 20);
-  project = loadResilienceGap();
-  activePatch = runLinkContingencies(project).worst!.patch;
-  tools.clear();
-  const cleanupDiscard = await registerCandidateTools(context, services);
-  await tools.get('discard_candidate')!.execute({});
-  assert.equal(candidate, null);
-  assert.equal(modelHash(project), modelHash(loadResilienceGap()));
-  cleanupDiscard();
+  const service = new CollaborativeWorkspaceService({
+    getProject: () => project, getPlan: () => plan, setPlan: (next) => { plan = next; },
+    getAnalysis: () => analysis as any, publishAnalysis: (next) => { analysis = next as any; },
+    getCandidate: () => candidate, publishCandidate: (next) => { candidate = next; },
+    optimizeCapacity: async () => ({
+      diagnostics: {
+        solver: 'HiGHS WASM',
+        solverVersion: 'test',
+        status: 'Optimal',
+        proof: 'optimal',
+        objectiveValue: 4,
+        mipGap: 0,
+        timedOut: false,
+        timeLimitMs: 0,
+        runtimeMs: 1,
+        modelConstructionMs: 0,
+        wasmInitializationMs: 0,
+        solveRuntimeMs: 1,
+        modelHash: modelHash(project),
+        scenarioHashes: [],
+        problemHash: 'test',
+        message: 'deterministic test result',
+      },
+      candidate: { id: 'candidate-visible', name: 'Upgrade L3', baseModelHash: modelHash(project), commands: [{ id: 'cmd-l3', type: 'set_link_capacity', actor: 'agent', args: { linkId: 'L3', capacityGbps: 15 }, createdAt: new Date(0).toISOString() }], objective: { name: 'cost', value: 5, unit: 'cost-units' }, rationaleEvidenceIds: ['capacity:L3'] },
+      selectedUpgrades: [{ linkId: 'L3', fromCapacityGbps: 10, toCapacityGbps: 15, cost: 5 }],
+      requirements: { targetUtilizationPct: 80, includeBaseline: true, budgetCostUnits: null, lockedLinkIds: [] }, scenarioHashes: [],
+    }),
+  });
+  const context: ModelContextLike = { registerTool(tool, options) { tools.set(tool.name, tool); options?.signal?.addEventListener('abort', () => tools.delete(tool.name), { once: true }); } };
+  const registration = await registerCollaborativeTools(context, service);
+  await tools.get('add_plan_change')!.execute({ type: 'disable_link', linkId: 'L1' });
+  await tools.get('analyze_plan')!.execute({});
+  await registration.refresh();
+  assert.ok(tools.has('propose_mitigation'));
+  await tools.get('propose_mitigation')!.execute({});
+  await registration.refresh();
+  for (const name of PROPOSAL_TOOL_NAMES) assert.ok(tools.has(name));
+  assert.equal(tools.has('apply_candidate'), false, 'canonical apply is intentionally absent from WebMCP');
+  const baseCapacity = project.links.find((link) => link.id === 'L3')!.capacityGbps;
+  const proposalId = plan.proposals.find((item) => item.state === 'pending')!.id;
+  await tools.get('accept_proposal_change')!.execute({ proposalId });
+  assert.equal(project.links.find((link) => link.id === 'L3')!.capacityGbps, baseCapacity, 'proposal acceptance edits the ChangePlan, not the base network');
+  assert.ok(plan.changes.some((change) => change.type === 'set_link_capacity' && change.actor === 'agent'));
+  registration.dispose();
 });

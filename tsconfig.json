@@ -33,7 +33,7 @@
         "packages/scenarios/src/index.ts"
       ],
       "@infratwin/webmcp": [
-        "packages/webmcp/src/index.ts"
+        "packages/webmcp/src/m35d.ts"
       ],
       "@infratwin/optimizer": [
         "packages/optimizer/src/index.ts"
