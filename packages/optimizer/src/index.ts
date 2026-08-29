@@ -564,3 +564,5 @@ export function verifyCapacityCandidate(project: NetworkProject, candidate: Cand
     expectedCost, violations, checkedScenarioHashes: patches.map((patch) => scenarioHash(patch)), verifier: 'deterministic-independent-checker-v1',
   };
 }
+
+export * from "./level4-design.ts";

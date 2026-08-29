@@ -425,3 +425,5 @@ export function loadMaintenanceTrap(): NetworkProject { return loadScenario('mai
 export function loadGrowthWall(): NetworkProject { return loadScenario('growth-wall'); }
 export function loadResilienceGap(): NetworkProject { return loadScenario('resilience-gap'); }
 export function createBlankProject(): NetworkProject { return loadScenario('blank'); }
+
+export * from "./level4-reference.ts";

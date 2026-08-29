@@ -182,3 +182,15 @@ button.danger:hover { background: #452026; }
 @media (max-width:800px) {
   .compact-form.two-col { grid-template-columns:1fr; }
 }
+
+/* Level 4A adaptive design comparison */
+.variant-table { display: grid; gap: 0.35rem; }
+.variant-row { display: grid; grid-template-columns: minmax(10rem, 1.4fr) 0.55fr 0.65fr 1.2fr 0.8fr; gap: 0.65rem; align-items: center; width: 100%; text-align: left; padding: 0.65rem 0.75rem; border: 1px solid var(--border); border-radius: 0.55rem; background: var(--panel); }
+.variant-row span { min-width: 0; }
+.variant-row span:first-child { display: grid; gap: 0.15rem; }
+.variant-row small { color: var(--muted); }
+.variant-row.selected { outline: 2px solid currentColor; }
+.variant-header { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); background: transparent; }
+.design-route-comparison { display: grid; gap: 0.35rem; margin: 0.75rem 0; padding: 0.65rem; border: 1px solid var(--border); border-radius: 0.55rem; }
+.candidate-link-editor { display: grid; gap: 0.55rem; padding-top: 0.5rem; }
+@media (max-width: 900px) { .variant-row { grid-template-columns: 1fr 0.5fr 0.7fr; } .variant-row > span:nth-child(4), .variant-row > span:nth-child(5) { grid-column: span 1; } }

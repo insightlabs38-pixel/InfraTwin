@@ -1,42 +1,99 @@
 # Level 4A Adaptive Network Design Optimization
 
-**Status:** IN PROGRESS
+**Status:** IN PROGRESS — implementation complete enough for clean CI validation
 
-## 0. Frozen baseline
+## Frozen baseline
 
-Level 4A starts from the post-M3.5D `main` commit:
+- Starting `main`: `2a309dce076181b7d140762938cacc0159b3690b`
+- Baseline quality gate: `33236971436` — success
+- Work branch: `tmp/level-4a-adaptive-design`
 
-- starting commit: `2a309dce076181b7d140762938cacc0159b3690b`
-- baseline quality-gate run: `33236971436`
-- baseline quality-gate conclusion: **success**
-- branch: `tmp/level-4a-adaptive-design`
+M3.5D remains the rollback boundary. Level 4A does not replace deterministic SSP/ECMP analysis, the existing capacity-only MILP, the browser-local ChangePlan, or the WebMCP coactivity architecture.
 
-The baseline passed the complete M3.5D gate: 111/111 unit tests, typecheck, production build, browser E2E, real headed Chromium `document.modelContext` WebMCP evaluation, Level 2 benchmark, Level 3 benchmark, and the retained Phase 3.5C scale benchmark.
+## Previous limitation
 
-Baseline Level 3 optimizer measurements from the frozen implementation:
+The frozen capacity MILP consumes pre-routed deterministic link loads and chooses only declared capacity upgrades. A human lock removes an upgrade variable but does not change routing, so a locked overloaded link can make that formulation infeasible even when another modeled routing/design solution exists.
 
-| Workload | Result | Runtime |
-| --- | --- | ---: |
-| Reference routing LP | Optimal, 40% maximum utilization | 77.697 ms |
-| Growth Wall capacity MILP | Optimal, G2 20→22 Gbps, cost 6, independently verified | 25.216 ms |
-| Resilience Gap capacity MILP | Optimal, R4/R5 10→14 Gbps, cost 8 | 16.424 ms |
+## Level 4A formulation
 
-The Phase 3.5C measured routing-LP recommendation remains approximately 10,000 flow variables. The canonical browser-local deterministic analysis envelope remains 500 nodes; Level 4A does not raise that model limit.
+Level 4A adds a separate bounded design path:
 
-## 1. Previous optimization limitation
+1. deterministic loop-free K candidate paths per demand using stable Yen-style alternatives;
+2. a reduced path-allocation LP over `demand × candidate path`;
+3. a joint MILP over path allocations plus declared capacity upgrades and, only when explicitly enabled, declared candidate links;
+4. independently reconstructed primal verification before a design is labeled verified.
 
-The frozen capacity MILP performs deterministic SSP/ECMP routing before constructing capacity constraints. For every selected scenario it consumes those pre-routed link loads, then chooses only declared `upgradeOptions`. A human lock removes upgrade variables for the protected link. Therefore a required overloaded locked target can correctly make that formulation infeasible even when a different routing/design solution exists outside the old formulation.
+Normal SSP/ECMP analysis remains authoritative for the current network. Optimized route allocations are proposal evidence, not silent changes to base routing policy.
 
-Existing regression coverage deliberately demonstrates that limitation: the M3.5A lock test reports infeasible/no-plan when all capacity-only repair targets are protected. Level 4A must preserve the truth of the capacity-only solver while adding a separate bounded adaptive-design formulation that can express rerouting and declared design choices.
+## Locks and routing restrictions
 
-## Baseline invariants frozen for Level 4A
+`locked` retains its M3.5D meaning: **do not modify**. A locked link may still carry traffic. Level 4A adds explicit `forbiddenRoutingLinkIds` / `forbiddenRoutingNodeIds` for human intent such as “do not route proposed traffic through this corridor.”
 
-- Default network analysis remains deterministic SSP/ECMP.
-- Existing capacity-only MILP and traffic-allocation LP remain available and correct.
-- Human locks mean **do not modify**, not **do not route through**.
-- WebMCP remains a view/control surface over the same browser-local `ChangePlan`; it is not redesigned.
-- Optimizer proposals cannot apply the canonical `NetworkProject` without the existing human approval boundary.
-- Stale/cancelled asynchronous results cannot publish after a semantic human edit.
-- The M3.5C 500-node browser/Worker/Worker-pool scale envelope remains a regression gate.
+## Action boundary
 
-The remainder of this document will be expanded with the final Level 4A formulation, reference proofs, benchmarks, safe envelope, WebMCP replan result, and deferred features once exact-head validation is complete.
+The ChangePlan explicitly controls:
+
+- capacity upgrades;
+- routing changes;
+- declared new links;
+- K candidate paths, bounded to 1–8;
+- declared candidate-link endpoints/capacity/weight/cost.
+
+The optimizer never fabricates a new-link endpoint or cost.
+
+## Required lock/replan reference
+
+The deterministic Level 4A reference encodes:
+
+- 12 Gbps A→D demand;
+- normal SSP uses X→BD and overloads X;
+- legacy capacity-only optimum: X 10→15 Gbps, cost 5;
+- human locks X (modification forbidden, traffic still allowed);
+- adaptive optimum: 8 Gbps remains on X→BD and 4 Gbps uses AC→Y;
+- Y upgrades 2→5 Gbps, cost 8;
+- expected route allocation: 66.7% / 33.3%;
+- proposal must pass reconstructed verification.
+
+## Additional deterministic references
+
+- Declared candidate-link reference: at a 90% target, the declared A→C candidate costs 11 versus upgrade-only cost 18; disabling new-link actions forces the cost-18 alternative.
+- Scenario-aware reference: baseline adaptive design costs 0, but the selected primary-corridor failure requires AC and CD upgrades for exact cost 12.
+- Pareto lock reference: target utilizations 80/70/60 produce nondominated verified costs 8/12/16.
+
+## Verification
+
+Every adaptive variant carries source model/plan identity, candidate path-set hash, selected scenario identity, solver/version/status/proof, selected actions, routing allocations, declared cost/peak utilization, and reconstructed verification status.
+
+The verifier reconstructs path continuity, demand conservation, action legality, link loads, capacity/utilization constraints, budget, objective, and scenario identity. It is described as **independently reconstructed primal verification**, not as a separate network simulator.
+
+## WebMCP
+
+M3.5D is extended rather than redesigned. `propose_mitigation` tries the proven capacity-only solver first and transparently falls back to adaptive design if allowed and needed. One concise state-dependent capability, `compare_mitigation_variants`, exposes a small verified Pareto frontier. Human edits invalidate/cancel stale adaptive work through the same shared application-service authority boundary.
+
+## UI
+
+- Network: current selected design summary and selected-demand default/proposed route comparison.
+- Plans: compact nondominated design variants and selection.
+- Analysis: adaptive solver/path/verification evidence.
+- Existing Advanced diagnostics remain available; no new optimizer dashboard was introduced.
+
+## Performance policy
+
+`benchmark:level4-design` measures candidate-path generation, reduced path-LP size/solve, joint MILP size/solve, reconstructed verification, scenario generation, Pareto solve count, and path-vs-arc formulation size at the small reference plus Tier A/B/C workloads where reasonable. Joint routing+design is deliberately not forced at 250/500 nodes merely because deterministic analysis supports those sizes.
+
+## Acceptance still outstanding
+
+Level 4A is not complete until the exact target branch tip passes the additive gate:
+
+- `npm ci`
+- `npm test`
+- `npm run typecheck`
+- `npm run build`
+- `npm run test:e2e`
+- `npm run test:webmcp:native`
+- `npm run benchmark:level2`
+- `npm run benchmark:level3`
+- `npm run benchmark:scale`
+- `npm run benchmark:level4-design`
+
+Final measured benchmark values and exact-head CI identifiers will be recorded after clean GitHub validation.

@@ -35,7 +35,7 @@ const initialCompute: ComputeCapabilities = { workerSupported: false, hardwareCo
 const initialProject = loadScenario('continental-service-network');
 
 export function useWorkbenchStage5(scope: any) {
-  const { project, plan, publishedPlanAnalysis, analysisFresh, analysis, progress, compiledPlanPatch, selectedCanonicalLink, snapshot, selectedCanonicalDemand, routeByDemand, settingsLinkId, optimizerStatus } = scope;
+  const { project, plan, publishedPlanAnalysis, analysisFresh, analysis, progress, compiledPlanPatch, selectedCanonicalLink, snapshot, selectedCanonicalDemand, routeByDemand, settingsLinkId, optimizerStatus, designState } = scope;
   const canRunResilience = project.links.some((link: any) => link.available !== false);
   const optimizerReady = optimizerStatus === 'ready' || optimizerStatus === 'running';
   const authority: 'DRAFT' | 'PASS' | 'FAIL' | 'STALE' = publishedPlanAnalysis ? (analysisFresh ? publishedPlanAnalysis.verdict : 'STALE') : 'DRAFT';
@@ -51,6 +51,11 @@ export function useWorkbenchStage5(scope: any) {
   const selectedSnapshotLink = selectedCanonicalLink ? snapshot.links.find((link: any) => link.id === selectedCanonicalLink.id) : undefined;
   const selectedRoute = selectedCanonicalDemand ? routeByDemand.get(selectedCanonicalDemand.id) : undefined;
   const settingsLink = project.links.find((link: any) => link.id === settingsLinkId);
+  const currentDesignState = designState && isPlanEvidenceFresh(designState.stamp, project, plan) ? designState : null;
+  const selectedDesignVariant = currentDesignState?.variants.find((variant:any) => variant.id === currentDesignState.selectedVariantId) ?? currentDesignState?.variants[0] ?? null;
+  const selectedDesignAllocations = selectedCanonicalDemand && selectedDesignVariant ? selectedDesignVariant.allocations.filter((row:any) => row.scenarioId === 'baseline' && row.demandId === selectedCanonicalDemand.id && row.flowGbps > 1e-8) : [];
+  const selectedDesignRoutes = selectedCanonicalDemand && selectedDesignVariant ? selectedDesignAllocations.map((row:any) => { const path = (selectedDesignVariant.candidatePathSet.pathsByScenarioDemand[`${row.scenarioHash}:${selectedCanonicalDemand.id}`] ?? []).find((item:any) => item.id === row.pathId); return { ...row, fraction: selectedCanonicalDemand.bandwidthGbps > 0 ? row.flowGbps / selectedCanonicalDemand.bandwidthGbps : 0, linkIds: path?.linkIds ?? [] }; }) : [];
+  const canCompareDesignVariants = analysisFresh && publishedPlanAnalysis?.verdict === 'FAIL' && (plan.constraints.allowedMitigationActions?.routingChanges ?? true);
   const analysisStatusLabel = authority === 'DRAFT' ? 'Plan has not been analyzed.' : authority === 'STALE' ? 'Plan changed since the last analysis.' : authority === 'PASS' ? 'No modeled violations.' : `${analysis.result.violations.length} violation${analysis.result.violations.length === 1 ? '' : 's'} · Peak ${pct(peak)}`;
-  Object.assign(scope, { canRunResilience, optimizerReady, authority, peak, primaryFailure, progressLabel, regionCount, n1Policy, eligibleN1, routingLpEstimate, capacityMilpEstimate, n1Guidance, selectedSnapshotLink, selectedRoute, settingsLink, analysisStatusLabel });
+  Object.assign(scope, { canRunResilience, optimizerReady, authority, peak, primaryFailure, progressLabel, regionCount, n1Policy, eligibleN1, routingLpEstimate, capacityMilpEstimate, n1Guidance, selectedSnapshotLink, selectedRoute, settingsLink, currentDesignState, selectedDesignVariant, selectedDesignAllocations, selectedDesignRoutes, canCompareDesignVariants, analysisStatusLabel });
 }
