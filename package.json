@@ -12,7 +12,7 @@
     "build": "npm run build --workspace @infratwin/web",
     "start": "npm run start --workspace @infratwin/web",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test": "node --experimental-transform-types --test tests/*.test.ts",
     "benchmark:level2": "node --experimental-strip-types benchmarks/level2-medium.ts",
     "benchmark:level3": "node --experimental-strip-types benchmarks/level3-optimizer.ts",
     "benchmark:scale": "npm run benchmark:scale:engine && npm run benchmark:scale:features && npm run benchmark:scale:browser",
