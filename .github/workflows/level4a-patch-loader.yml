@@ -1,0 +1,56 @@
+name: Level4A Patch Loader
+
+on:
+  push:
+    branches:
+      - tmp/level4a-patch-loader
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: contains(github.event.head_commit.message, 'activate Level 4A patch loader')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout frozen Level 4A target
+        uses: actions/checkout@v4
+        with:
+          ref: tmp/level-4a-adaptive-design
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch helper branch and reconstruct verified patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_TARGET="4cc80316dcc8338ea8018b7a9edc6a97c580c887"
+          ACTUAL_TARGET="$(git rev-parse HEAD)"
+          if [ "$ACTUAL_TARGET" != "$EXPECTED_TARGET" ]; then
+            echo "Refusing to apply: target moved from frozen baseline $EXPECTED_TARGET to $ACTUAL_TARGET" >&2
+            exit 1
+          fi
+
+          git fetch origin tmp/level4a-patch-loader:refs/remotes/origin/tmp/level4a-patch-loader
+          : > /tmp/level4a.b64
+          for n in 01 02 03 04 05; do
+            git show "origin/tmp/level4a-patch-loader:.level4a-loader/part-${n}.b64" >> /tmp/level4a.b64
+          done
+
+          base64 -d /tmp/level4a.b64 > /tmp/level4a.patch.gz
+          echo "6dbd43fe6bee6f5913ebe6e746da0e2782667bd0975bea9f161d336f474ecc67  /tmp/level4a.patch.gz" | sha256sum -c -
+          gzip -dc /tmp/level4a.patch.gz > /tmp/level4a.patch
+          git apply --check /tmp/level4a.patch
+          git apply /tmp/level4a.patch
+          git diff --check
+
+      - name: Create one coherent Level 4A implementation commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --stat
+          git commit -m "feat(level4a): implement adaptive network design optimization"
+          git push origin HEAD:tmp/level-4a-adaptive-design
