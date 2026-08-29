@@ -48,7 +48,24 @@ function candidateFor(project: NetworkProject, linkId = 'L3', capacityGbps = 20)
 
 function optimizerResult(project: NetworkProject, lockedLinkIds: string[] = [], candidate: CandidatePlan | null = candidateFor(project)): CapacityOptimizationResult {
   return {
-    diagnostics: { status: 'Optimal', proof: 'optimal', runtimeMs: 1, solver: 'test' },
+    diagnostics: {
+        solver: 'HiGHS WASM',
+        solverVersion: 'test',
+        status: 'Optimal',
+        proof: 'optimal',
+        objectiveValue: 4,
+        mipGap: 0,
+        timedOut: false,
+        timeLimitMs: 0,
+        runtimeMs: 1,
+        modelConstructionMs: 0,
+        wasmInitializationMs: 0,
+        solveRuntimeMs: 1,
+        modelHash: modelHash(project),
+        scenarioHashes: [],
+        problemHash: 'test',
+        message: 'deterministic test result',
+      },
     candidate,
     selectedUpgrades: candidate ? [{ linkId: String(candidate.commands[0].args.linkId), fromCapacityGbps: 10, toCapacityGbps: Number(candidate.commands[0].args.capacityGbps), cost: 4 }] : [],
     requirements: { targetUtilizationPct: 80, includeBaseline: true, budgetCostUnits: null, lockedLinkIds },
@@ -119,7 +136,7 @@ function createModelContext() {
       toolchange += 1;
     },
     async getTools() { return [...tools.values()].map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema, annotations: tool.annotations })); },
-    async executeTool(name, input, options) { const tool = tools.get(name); if (!tool) throw new Error(`Tool ${name} is unavailable`); return tool.execute(JSON.parse(input || '{}') as Record<string, unknown>, options); },
+    async executeTool(discovered, input, options) { const tool = tools.get(discovered.name); if (!tool) throw new Error(`Tool ${discovered.name} is unavailable`); return tool.execute(JSON.parse(input || '{}') as Record<string, unknown>, options); },
   };
   return { context, tools, signals, get toolchange() { return toolchange; } };
 }

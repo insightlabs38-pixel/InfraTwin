@@ -39,7 +39,9 @@ function checkAbort(signal?:AbortSignal){ if(signal?.aborted) throw abortError()
 function retag(plan:ChangePlan, actor:PlanActor, action?:string){ if(actor==='human') return plan; const next=clone(plan); for(let i=next.history.length-1;i>=0;i--){ if(!action || next.history[i].action===action){ next.history[i].actor=actor; break; } } return next; }
 
 export class CollaborativeWorkspaceService {
-  private seq=0; constructor(private readonly a:CollaborativeWorkspaceAdapters){}
+  private seq=0;
+  private readonly a: CollaborativeWorkspaceAdapters;
+  constructor(a: CollaborativeWorkspaceAdapters){ this.a=a; }
   private now(){ return this.a.now?.() ?? new Date().toISOString(); }
   private publishPlan(plan:ChangePlan, semantic=true){ if(semantic) this.a.onSemanticMutation?.(); this.a.setPlan(plan); }
   private activity(actor:WorkspaceActivityActor,action:string,summary:string,relatedId?:string){ this.a.onActivity?.({id:`workspace-${++this.seq}`,actor,action,summary,occurredAt:this.now(),relatedId}); }
@@ -51,7 +53,46 @@ export class CollaborativeWorkspaceService {
   inspectAnalysis(){const p=this.a.getProject(),plan=this.a.getPlan(),a=this.getAnalysis();if(!a)return{state:'not-run' as const};const fresh=isPlanEvidenceFresh(a.stamp,p,plan);return{state:fresh?'current' as const:'stale' as const,verdict:a.verdict,planHash:a.planHash,peakUtilizationPct:a.capacity.routing.peakUtilizationPct,violationCount:a.capacity.result.violations.length,violations:a.capacity.result.violations.slice(0,12).map(compactViolation),reasons:a.reasons,runtimeMs:a.capacity.result.runtimeMs,solver:a.capacity.result.solver};}
   private target(kind:'link'|'node'|'demand',explicit?:string,target?:'selection'){if(target==='selection'){const s=this.getSelection();if(!s)throw new Error('No current selection.');if(s.kind!==kind)throw new Error(`Current selection is ${s.kind}, not ${kind}.`);return s.id;}if(!explicit)throw new Error(`${kind} id is required.`);return explicit;}
   private unlocked(change:PlanChange,actor:PlanActor){if(actor!=='agent')return;const p=this.a.getPlan();if(change.target.kind==='link'&&p.restrictions.lockedLinkIds.includes(change.target.id))throw new Error(`Link ${change.target.id} is locked by the human.`);if(change.target.kind==='node'&&p.restrictions.lockedNodeIds.includes(change.target.id))throw new Error(`Node ${change.target.id} is locked by the human.`);}
-  addPlanChange(input:PlanChangeInput,actor:PlanActor='agent'){const p=this.a.getProject(),plan=this.a.getPlan(),now=this.now(),id=`change:${actor}:${++this.seq}`;let c:PlanChange;if(input.type==='disable_link'||input.type==='enable_link'){const x=this.target('link',input.linkId,input.target);if(!p.links.some(v=>v.id===x))throw new Error(`Unknown link ${x}`);c={id,actor,type:input.type,target:{kind:'link',id:x},payload:{},createdAt:now};}else if(input.type==='disable_node'||input.type==='enable_node'){const x=this.target('node',input.nodeId,input.target);if(!p.nodes.some(v=>v.id===x))throw new Error(`Unknown node ${x}`);c={id,actor,type:input.type,target:{kind:'node',id:x},payload:{},createdAt:now};}else if(input.type==='set_link_capacity'){const x=this.target('link',input.linkId,input.target);if(!Number.isFinite(input.capacityGbps)||input.capacityGbps<=0)throw new Error('capacityGbps must be > 0');c={id,actor,type:input.type,target:{kind:'link',id:x},payload:{capacityGbps:input.capacityGbps},createdAt:now};}else if(input.type==='set_demand_bandwidth'){const x=this.target('demand',input.demandId,input.target);if(!Number.isFinite(input.bandwidthGbps)||input.bandwidthGbps<0)throw new Error('bandwidthGbps must be >= 0');c={id,actor,type:input.type,target:{kind:'demand',id:x},payload:{bandwidthGbps:input.bandwidthGbps},createdAt:now};}else if(input.type==='add_demand')c={id,actor,type:'add_demand',target:{kind:'demand',id:input.demand.id},payload:{demand:clone(input.demand)},createdAt:now};else{if(!Number.isFinite(input.multiplier)||input.multiplier<0)throw new Error('multiplier must be >= 0');const ids=input.target==='selection'?[this.target('demand',undefined,'selection')]:[...new Set(input.demandIds??[])].sort();if(!ids.length)throw new Error('At least one demand id or a current demand selection is required.');for(const x of ids)if(!p.demands.some(d=>d.id===x))throw new Error(`Unknown demand ${x}`);c={id,actor,type:'demand_growth',target:{kind:'demands',ids},payload:{multiplier:input.multiplier},createdAt:now};}this.unlocked(c,actor);const next=addPlanChange(plan,c,now);assertValidChangePlan(p,next);this.publishPlan(next);this.activity(actor,'added_change',describePlanChange(c),c.id);return next;}
+  addPlanChange(input:PlanChangeInput,actor:PlanActor='agent'){
+    const p=this.a.getProject(),plan=this.a.getPlan(),now=this.now(),id=`change:${actor}:${++this.seq}`;
+    let c:PlanChange;
+    if(input.type==='disable_link'||input.type==='enable_link'){
+      const x=this.target('link',input.linkId,input.target);
+      if(!p.links.some(v=>v.id===x))throw new Error(`Unknown link ${x}`);
+      c={id,actor,type:input.type,target:{kind:'link',id:x},payload:{},createdAt:now};
+    }else if(input.type==='disable_node'||input.type==='enable_node'){
+      const x=this.target('node',input.nodeId,input.target);
+      if(!p.nodes.some(v=>v.id===x))throw new Error(`Unknown node ${x}`);
+      c={id,actor,type:input.type,target:{kind:'node',id:x},payload:{},createdAt:now};
+    }else if(input.type==='set_link_capacity'){
+      const x=this.target('link',input.linkId,input.target);
+      if(!p.links.some(v=>v.id===x))throw new Error(`Unknown link ${x}`);
+      if(!Number.isFinite(input.capacityGbps)||input.capacityGbps<=0)throw new Error('capacityGbps must be > 0');
+      c={id,actor,type:input.type,target:{kind:'link',id:x},payload:{capacityGbps:input.capacityGbps},createdAt:now};
+    }else if(input.type==='set_demand_bandwidth'){
+      const x=this.target('demand',input.demandId,input.target);
+      if(!p.demands.some(v=>v.id===x))throw new Error(`Unknown demand ${x}`);
+      if(!Number.isFinite(input.bandwidthGbps)||input.bandwidthGbps<0)throw new Error('bandwidthGbps must be >= 0');
+      c={id,actor,type:input.type,target:{kind:'demand',id:x},payload:{bandwidthGbps:input.bandwidthGbps},createdAt:now};
+    }else if(input.type==='add_demand'){
+      c={id,actor,type:'add_demand',target:{kind:'demand',id:input.demand.id},payload:{demand:clone(input.demand)},createdAt:now};
+    }else{
+      const multiplier=input.multiplier;
+      if(!Number.isFinite(multiplier)||multiplier<0)throw new Error('multiplier must be >= 0');
+      const ids:string[]=input.target==='selection'
+        ? [this.target('demand',undefined,'selection')]
+        : [...new Set<string>(input.demandIds??[])].sort();
+      if(!ids.length)throw new Error('At least one demand id or a current demand selection is required.');
+      for(const x of ids)if(!p.demands.some(d=>d.id===x))throw new Error(`Unknown demand ${x}`);
+      c={id,actor,type:'demand_growth',target:{kind:'demands',ids},payload:{multiplier},createdAt:now};
+    }
+    this.unlocked(c,actor);
+    const next=addPlanChange(plan,c,now);
+    assertValidChangePlan(p,next);
+    this.publishPlan(next);
+    this.activity(actor,'added_change',describePlanChange(c),c.id);
+    return next;
+  }
   removePlanChange(id:string,actor:PlanActor='agent'){const plan=this.a.getPlan(),c=plan.changes.find(x=>x.id===id);if(!c)throw new Error(`Unknown plan change ${id}`);this.unlocked(c,actor);const next=retag(removePlanChange(plan,id,this.now()),actor,'removed_change');this.publishPlan(next);this.activity(actor,'removed_change',`Removed ${describePlanChange(c)}`,id);return next;}
   setPlanConstraint<K extends keyof PlanConstraints>(key:K,value:PlanConstraints[K],actor:PlanActor='agent'){const next=retag(setPlanConstraint(this.a.getPlan(),key,value,this.now()),actor,'set_constraint');assertValidChangePlan(this.a.getProject(),next);this.publishPlan(next);this.activity(actor,'set_constraint',`Set ${String(key)}`);return next;}
   setPlanRestriction(kind:'link'|'node',id:string,locked:boolean,actor:PlanActor='human'){const p=this.a.getProject();if(kind==='link'&&!p.links.some(x=>x.id===id))throw new Error(`Unknown link ${id}`);if(kind==='node'&&!p.nodes.some(x=>x.id===id))throw new Error(`Unknown node ${id}`);if(actor==='agent'&&!locked)throw new Error('Agent cannot remove a human restriction.');const raw=kind==='link'?setPlanLinkLocked(this.a.getPlan(),id,locked,this.now()):setPlanNodeLocked(this.a.getPlan(),id,locked,this.now());const next=retag(raw,actor,locked?(kind==='link'?'locked_link':'locked_node'):(kind==='link'?'unlocked_link':'unlocked_node'));this.publishPlan(next);this.activity(actor,locked?'locked_resource':'unlocked_resource',`${locked?'Locked':'Unlocked'} ${id}`,id);return next;}
@@ -68,6 +109,55 @@ export class CollaborativeWorkspaceService {
   acceptAllProposalChanges(actor:PlanActor='human'){let next=this.a.getPlan();const ids=next.proposals.filter(x=>x.state==='pending').map(x=>x.id);for(const id of ids)next=retag(acceptCandidateChange(next,id,this.now()),actor,'accepted_proposal');this.publishPlan(next);this.activity(actor,'accepted_all_proposals','Accepted all current proposal changes');return next;}
   rejectProposalChange(id:string,actor:PlanActor='human'){const next=retag(rejectCandidateChange(this.a.getPlan(),id,this.now()),actor,'rejected_proposal');this.publishPlan(next,false);this.activity(actor,'rejected_proposal',`Rejected proposal ${id}`,id);return next;}
   discardProposal(actor:PlanActor='human'){const next=discardCandidateProposals(this.a.getPlan(),this.now(),actor);this.publishPlan(next,false);this.a.publishCandidate?.(null);this.activity(actor,'discarded_proposal','Discarded pending optimizer proposal');return next;}
-  async verifyPlan(signal?:AbortSignal,actor:PlanActor='agent'):Promise<WorkspaceVerification>{checkAbort(signal);const p=clone(this.a.getProject()),plan=clone(this.a.getPlan()),stamp=changePlanRevisionStamp(p,plan),analysis=analyzeChangePlan(p,plan);let coverage:WorkspaceVerification['scenarioCoverage']={tested:0,eligible:0,status:'not-required'},status:WorkspaceVerification['status']=analysis.verdict==='PASS'?'verified':'failed';if(plan.constraints.requireN1){const c=this.a.getContingencies?.();if(!c||!isPlanEvidenceFresh(c.stamp,p,plan)){status='partial';coverage={tested:0,eligible:p.links.filter(l=>l.available!==false).length,status:'partial'};}else{coverage={tested:c.analysis.completedScenarios,eligible:c.analysis.totalEligibleScenarios,status:c.analysis.status==='complete'?'complete':'partial'};if(c.analysis.status!=='complete')status='partial';else if(c.analysis.result.verdict==='FAIL')status='failed';}}let candidateVerification:CandidateVerification|undefined;const candidate=this.a.getCandidate?.()??null;if(candidate&&this.a.verifyCandidate){candidateVerification=await this.a.verifyCandidate(p,candidate,this.requirements(),signal);checkAbort(signal);if(candidateVerification.status!=='verified')status='failed';}if(!isPlanRevisionFresh(stamp,this.a.getProject(),this.a.getPlan()))throw new Error('Stale verification discarded because the plan or proposal state changed.');const result:WorkspaceVerification={status,modelHash:modelHash(p),planHash:changePlanHash(plan),assumptions:analysis.capacity.result.assumptions,constraintsChecked:[`targetUtilizationPct<=${plan.constraints.targetUtilizationPct}`,`budgetCostUnits=${plan.constraints.budgetCostUnits??'unbounded'}`,`protectedServiceClassIds=${plan.constraints.protectedServiceClassIds.join(',')||'none'}`,`requireN1=${plan.constraints.requireN1}`],scenarioCoverage:coverage,evidenceIds:analysis.capacity.result.witnesses.slice(0,24).map(w=>w.id),candidateVerification};this.a.publishVerification?.({result,stamp});if(status==='verified'){const next=retag(setChangePlanStatus(this.a.getPlan(),'verified','Deterministic shared-plan verification passed.',this.now()),actor,'plan_status');this.publishPlan(next,false);}this.activity(actor,'verified_plan',`Verification ${status}`);return result;}
+  async verifyPlan(signal?:AbortSignal,actor:PlanActor='agent'):Promise<WorkspaceVerification>{
+    checkAbort(signal);
+    const p=clone(this.a.getProject()),plan=clone(this.a.getPlan()),stamp=changePlanRevisionStamp(p,plan);
+    const analysis=this.a.analyzePlanAsync?await this.a.analyzePlanAsync(p,plan,signal):analyzeChangePlan(p,plan);
+    checkAbort(signal);
+    if(!isPlanRevisionFresh(stamp,this.a.getProject(),this.a.getPlan()))throw new Error('Stale verification discarded because the plan or proposal state changed.');
+    let coverage:WorkspaceVerification['scenarioCoverage']={tested:0,eligible:0,status:'not-required'};
+    let status:WorkspaceVerification['status']=analysis.verdict==='PASS'?'verified':'failed';
+    if(plan.constraints.requireN1){
+      const c=this.a.getContingencies?.();
+      if(!c||!isPlanEvidenceFresh(c.stamp,p,plan)){
+        status='partial';
+        coverage={tested:0,eligible:p.links.filter(l=>l.available!==false).length,status:'partial'};
+      }else{
+        coverage={tested:c.analysis.completedScenarios,eligible:c.analysis.totalEligibleScenarios,status:c.analysis.status==='complete'?'complete':'partial'};
+        if(c.analysis.status!=='complete')status='partial';
+        else if(c.analysis.result.verdict==='FAIL')status='failed';
+      }
+    }
+    let candidateVerification:CandidateVerification|undefined;
+    const candidate=this.a.getCandidate?.()??null;
+    if(candidate&&this.a.verifyCandidate){
+      candidateVerification=await this.a.verifyCandidate(p,candidate,this.requirements(),signal);
+      checkAbort(signal);
+      if(candidateVerification.status!=='verified')status='failed';
+    }
+    if(!isPlanRevisionFresh(stamp,this.a.getProject(),this.a.getPlan()))throw new Error('Stale verification discarded because the plan or proposal state changed.');
+    const result:WorkspaceVerification={
+      status,
+      modelHash:modelHash(p),
+      planHash:changePlanHash(plan),
+      assumptions:analysis.capacity.result.assumptions,
+      constraintsChecked:[
+        `targetUtilizationPct<=${plan.constraints.targetUtilizationPct}`,
+        `budgetCostUnits=${plan.constraints.budgetCostUnits??'unbounded'}`,
+        `protectedServiceClassIds=${plan.constraints.protectedServiceClassIds.join(',')||'none'}`,
+        `requireN1=${plan.constraints.requireN1}`,
+      ],
+      scenarioCoverage:coverage,
+      evidenceIds:analysis.capacity.result.witnesses.slice(0,24).map(w=>w.id),
+      candidateVerification,
+    };
+    this.a.publishVerification?.({result,stamp});
+    if(status==='verified'){
+      const next=retag(setChangePlanStatus(this.a.getPlan(),'verified','Deterministic shared-plan verification passed.',this.now()),actor,'plan_status');
+      this.publishPlan(next,false);
+    }
+    this.activity(actor,'verified_plan',`Verification ${status}`);
+    return result;
+  }
   capabilityState(){const p=this.a.getProject(),plan=this.a.getPlan(),a=this.getAnalysis(),current=!!a&&isPlanEvidenceFresh(a.stamp,p,plan),hasViolation=!!(current&&a!.verdict==='FAIL'&&a!.capacity.result.violations.length),ids=new Set(current?a!.capacity.result.violations.map(v=>v.linkId).filter((id):id is string=>!!id):[]),hasUnlockedUpgradeTarget=p.links.some(l=>ids.has(l.id)&&!plan.restrictions.lockedLinkIds.includes(l.id)&&(l.upgradeOptions?.some(o=>o.capacityGbps>l.capacityGbps+1e-9)??false)),proposal=this.proposal();return{analysisCurrent:current,hasViolation,proposalPresent:proposal.proposals.length>0,proposalStale:proposal.stale,canDecideProposal:proposal.proposals.length>0&&!proposal.stale,canProposeMitigation:hasViolation&&hasUnlockedUpgradeTarget,hasCompleteN1:this.a.getContingencies?.()?.analysis.status==='complete'};}
 }
