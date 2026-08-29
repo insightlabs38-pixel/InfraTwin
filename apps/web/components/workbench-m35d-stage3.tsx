@@ -61,7 +61,38 @@ export function useWorkbenchStage3(scope: any) {
     onSemanticMutation: () => { cancelAsync(); ephemeralRef.current = null; setEphemeralPatch(null); setBottleneck(null); setComparison(null); setRoutingOptimization(null); },
     onActivity: (event: WorkspaceActivityEvent) => { if (event.actor === 'agent' && !event.action.startsWith('inspect')) setCollaborationNotice(`Agent · ${event.summary}`); },
   }), []);
-  useEffect(() => { const context = (document as Document & { modelContext?: ModelContextLike }).modelContext; if (!context?.registerTool) { setWebmcpStatus('unsupported'); setRegisteredTools([]); return; } let active = true; registerCollaborativeTools(context, workspaceService, { onActivity: (event: ToolActivityEvent) => setActivity((current: ToolActivityEvent[]) => [event, ...current].slice(0, 40)), onToolSetChanged: (names: string[]) => setRegisteredTools(names) }).then((registration: WebMCPRegistration) => { if (!active) registration.dispose(); else { webmcpRegistrationRef.current = registration; setWebmcpStatus('registered'); setRegisteredTools(registration.getRegisteredNames()); } }).catch((error: unknown) => { const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error); (window as Window & { __infratwinWebMCPRegistrationError?: string }).__infratwinWebMCPRegistrationError = message; console.error('[InfraTwin WebMCP] registration failed', error); setWebmcpStatus('error'); }); return () => { active = false; webmcpRegistrationRef.current?.dispose(); webmcpRegistrationRef.current = null; }; }, [workspaceService]);
+  useEffect(() => {
+    const context = (document as Document & { modelContext?: ModelContextLike }).modelContext;
+    if (!context?.registerTool) { setWebmcpStatus('unsupported'); setRegisteredTools([]); return; }
+    let active = true;
+    delete (window as Window & { __infratwinWebMCPRegistrationError?: string }).__infratwinWebMCPRegistrationError;
+    const register = async () => {
+      // React Strict Mode mounts, cleans up, and remounts effects in development. Yield once so
+      // the abandoned first effect cannot overlap native registerTool calls with the live mount.
+      await Promise.resolve();
+      if (!active) return;
+      try {
+        const registration = await registerCollaborativeTools(context, workspaceService, {
+          onActivity: (event: ToolActivityEvent) => setActivity((current: ToolActivityEvent[]) => [event, ...current].slice(0, 40)),
+          onToolSetChanged: (names: string[]) => setRegisteredTools(names),
+        });
+        if (!active) registration.dispose();
+        else {
+          webmcpRegistrationRef.current = registration;
+          setWebmcpStatus('registered');
+          setRegisteredTools(registration.getRegisteredNames());
+        }
+      } catch (error: unknown) {
+        if (!active) return;
+        const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+        (window as Window & { __infratwinWebMCPRegistrationError?: string }).__infratwinWebMCPRegistrationError = message;
+        console.error('[InfraTwin WebMCP] registration failed', error);
+        setWebmcpStatus('error');
+      }
+    };
+    void register();
+    return () => { active = false; webmcpRegistrationRef.current?.dispose(); webmcpRegistrationRef.current = null; };
+  }, [workspaceService]);
   useEffect(() => { void webmcpRegistrationRef.current?.refresh(); }, [currentPlanHash, plan.proposals, analysisFresh, publishedPlanAnalysis?.verdict, optimizerStatus, workspaceService]);
   const runWorkspaceAction = (fn: () => void) => { try { fn(); setImportMessage(''); } catch (error) { setImportMessage(error instanceof Error ? error.message : 'Change Plan action failed.'); } };
   const removeMatchingChanges = (predicate: (item: PlanChange) => boolean) => { for (const item of [...planRef.current.changes].filter(predicate)) workspaceService.removePlanChange(item.id, 'human'); };
