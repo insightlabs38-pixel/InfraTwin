@@ -31,7 +31,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/optimizer/src/level4-design.ts packages/optimizer/src/index.ts
+          git add packages/optimizer/src/level4-path-engine.ts packages/optimizer/src/level4-design.ts packages/optimizer/src/index.ts
           git diff --cached --exit-code && exit 0
           git commit -m "feat(level4b): integrate compiled path engine [level4b-applied]"
           git push origin HEAD:feature/level-4b-high-scale-design
