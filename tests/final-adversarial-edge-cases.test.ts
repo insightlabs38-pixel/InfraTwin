@@ -73,7 +73,7 @@ test('AV-14/AV-30: blank network analysis and N-1 return explicit empty complete
 
   const capacity = runCapacityAnalysis(blank);
   assert.equal(capacity.result.verdict, 'PASS');
-  assert.deepEqual(capacity.routes, []);
+  assert.deepEqual(capacity.routing.routes, []);
 
   const sequential = runLinkContingencies(blank);
   assert.equal(sequential.status, 'complete');
@@ -132,7 +132,7 @@ test('AV-17: CSV parser rejects structural, reference, numeric, and identifier c
   const goodNodes = 'id,name\nA,Alpha\nB,Beta\n';
   const goodLinks = 'id,source,target,capacityGbps,weight\nAB,A,B,40,1\n';
   assert.throws(() => parseCsvBundle({ nodesCsv: 'id,id,name\nA,A,Alpha\nB,B,Beta\n', linksCsv: goodLinks }), /duplicate header/i);
-  assert.throws(() => parseCsvBundle({ nodesCsv: 'id,name\nA,Alpha\nA,Again\n', linksCsv: goodLinks }), /duplicate node id|duplicate.*A/i);
+  assert.throws(() => parseCsvBundle({ nodesCsv: 'id,name\nA,Alpha\nA,Again\nB,Beta\n', linksCsv: goodLinks }), /duplicate node id|duplicate.*A/i);
   assert.throws(() => parseCsvBundle({ nodesCsv: goodNodes, linksCsv: 'id,source,target,capacityGbps\nAB,A,MISSING,40\n' }), /unknown node MISSING/i);
   assert.throws(() => parseCsvBundle({ nodesCsv: goodNodes, linksCsv: 'id,source,target,capacityGbps\nAA,A,A,40\n' }), /cannot connect a node to itself/i);
   for (const bad of ['NaN', 'Infinity', '-1', '0']) {
