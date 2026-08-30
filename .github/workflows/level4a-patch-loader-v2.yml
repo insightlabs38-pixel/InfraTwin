@@ -1,4 +1,4 @@
-name: Level4A Patch Loader v2
+name: Level4A Unit Fix Executor
 
 on:
   push:
@@ -15,59 +15,62 @@ jobs:
   apply:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout frozen Level 4A target
+      - name: Checkout current Level 4A target
         uses: actions/checkout@v4
         with:
           ref: tmp/level-4a-adaptive-design
           fetch-depth: 0
 
-      - name: Reconstruct and validate full Level 4A patch
+      - name: Apply two bounded unit fixes
         shell: bash
         run: |
           set -euo pipefail
-          EXPECTED_TARGET="4cc80316dcc8338ea8018b7a9edc6a97c580c887"
+          EXPECTED_TARGET="d75cbb62be51f6bf18aea3f71029b026317d6d19"
           ACTUAL_TARGET="$(git rev-parse HEAD)"
           if [ "$ACTUAL_TARGET" != "$EXPECTED_TARGET" ]; then
-            echo "Refusing to apply: target moved from frozen baseline $EXPECTED_TARGET to $ACTUAL_TARGET" >&2
+            echo "Refusing to apply: target moved from $EXPECTED_TARGET to $ACTUAL_TARGET" >&2
             exit 1
           fi
 
-          git fetch origin tmp/level4a-patch-loader:refs/remotes/origin/tmp/level4a-patch-loader
-          : > /tmp/level4a-v2.b64
-          git show origin/tmp/level4a-patch-loader:.level4a-loader-v2/part-01.b64 >> /tmp/level4a-v2.b64
-          git show origin/tmp/level4a-patch-loader:.level4a-loader-v2/part-02a.b64 >> /tmp/level4a-v2.b64
-          git show origin/tmp/level4a-patch-loader:.level4a-loader-v2/part-02b.b64 >> /tmp/level4a-v2.b64
-          for n in 03 04 05 06 07 08; do
-            git show "origin/tmp/level4a-patch-loader:.level4a-loader-v2/part-${n}.b64" >> /tmp/level4a-v2.b64
-          done
+          python - <<'PY'
+          from pathlib import Path
 
-          base64 -d /tmp/level4a-v2.b64 > /tmp/level4a-v2.patch.xz
-          echo "b53c389cc89d8262fc2b75f25d7a2b6b245637d470898f8e5439f4b02e449804  /tmp/level4a-v2.patch.xz" | sha256sum -c -
-          xz -dc /tmp/level4a-v2.patch.xz > /tmp/level4a-v2.patch
+          optimizer = Path('packages/optimizer/src/level4-design.ts')
+          text = optimizer.read_text()
+          old = "if(s.includes('infeasible')){if(r.lockedLinkIds.length||r.lockedNodeIds.length)return'LOCKS_REMOVE_ALL_FEASIBLE_ACTIONS' as const;if(r.budgetCostUnits!==null)return'BUDGET_INFEASIBLE' as const;return'SCENARIO_REQUIREMENTS_INFEASIBLE' as const}"
+          new = "if(s.includes('infeasible')){if(r.budgetCostUnits!==null)return'BUDGET_INFEASIBLE' as const;if(r.lockedLinkIds.length||r.lockedNodeIds.length)return'LOCKS_REMOVE_ALL_FEASIBLE_ACTIONS' as const;return'SCENARIO_REQUIREMENTS_INFEASIBLE' as const}"
+          if text.count(old) != 1:
+              raise SystemExit('classification replacement did not match exactly once')
+          optimizer.write_text(text.replace(old, new))
 
-          git apply --check /tmp/level4a-v2.patch
-          git apply /tmp/level4a-v2.patch
+          test_file = Path('tests/level4a-adaptive-design.test.ts')
+          text = test_file.read_text()
+          old = "let plan=createChangePlan('level4a-app-plan','Level 4A shared plan')"
+          new = "let plan=createChangePlan(project,'Level 4A shared plan',{id:'level4a-app-plan',now:'2026-08-29T00:00:00.000Z'})"
+          if text.count(old) != 1:
+              raise SystemExit('createChangePlan replacement did not match exactly once')
+          test_file.write_text(text.replace(old, new))
+          PY
+
           git diff --check
+          git diff -- packages/optimizer/src/level4-design.ts tests/level4a-adaptive-design.test.ts
 
-          test -f packages/optimizer/src/level4-design.ts
-          test -f packages/scenarios/src/level4-reference.ts
-          test -f tests/level4a-adaptive-design.test.ts
-          test -f e2e/level4a-adaptive-design.spec.ts
-          test -f benchmarks/level4-design.ts
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
-          if ! git diff --quiet -- .github/workflows/ci.yml; then
-            echo "Refusing to publish: code patch unexpectedly modifies .github/workflows/ci.yml" >&2
-            exit 1
-          fi
+      - run: npm ci
+      - name: Run focused Level 4A unit suite
+        run: node --experimental-strip-types --test tests/level4a-adaptive-design.test.ts
 
-      - name: Create one coherent Level 4A implementation commit
+      - name: Commit and push bounded fixes
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git add packages/optimizer/src/level4-design.ts tests/level4a-adaptive-design.test.ts
           git diff --cached --check
-          git diff --cached --stat
-          git commit -m "feat(level4a): implement adaptive network design optimization"
+          test "$(git diff --cached --name-only | wc -l)" -eq 2
+          git commit -m "fix(level4a): align infeasibility and replan test contracts"
           git push origin HEAD:tmp/level-4a-adaptive-design
