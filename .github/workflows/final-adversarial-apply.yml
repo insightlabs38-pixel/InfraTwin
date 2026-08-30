@@ -4,7 +4,7 @@ on:
   push:
     branches: [final/adversarial-validation]
     paths:
-      - scripts/final-adversarial-authority-fix.py
+      - scripts/final-adversarial-routing-cache-fix.py
       - .github/workflows/final-adversarial-apply.yml
   workflow_dispatch:
 
@@ -22,13 +22,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: python3 scripts/final-adversarial-authority-fix.py
+      - run: python3 scripts/final-adversarial-routing-cache-fix.py
       - run: npm ci
       - run: npm test
       - run: npm run typecheck
       - run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/application/src/index.ts tests/final-adversarial.test.ts
-          git diff --cached --quiet || git commit -m "fix(final): bind proposal acceptance to live project"
+          git add packages/graph-engine/src/index.ts tests/final-adversarial.test.ts
+          git diff --cached --quiet || git commit -m "fix(final): make routing session cache identity collision-safe"
           git push origin HEAD:final/adversarial-validation
