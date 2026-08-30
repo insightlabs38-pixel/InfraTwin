@@ -1,6 +1,6 @@
 # Level 4A Adaptive Network Design Optimization
 
-**Status:** IN PROGRESS — implementation complete enough for clean CI validation
+**Status:** COMPLETE
 
 ## Frozen baseline
 
@@ -71,6 +71,8 @@ The verifier reconstructs path continuity, demand conservation, action legality,
 
 M3.5D is extended rather than redesigned. `propose_mitigation` tries the proven capacity-only solver first and transparently falls back to adaptive design only when routing redesign is explicitly allowed and needed. One concise state-dependent capability, `compare_mitigation_variants`, exposes a small verified Pareto frontier. Human edits invalidate/cancel stale adaptive work through the same shared application-service authority boundary.
 
+The headed native Chromium lane exercises real `document.modelContext` discovery/execution for the Level 4A replan sequence: capacity-only cost 5 → human locks X → adaptive verified Y alternative cost 8 → `verify_plan` confirms reconstructed adaptive verification.
+
 ## UI
 
 - Network: current selected design summary and selected-demand default/proposed route comparison.
@@ -79,9 +81,27 @@ M3.5D is extended rather than redesigned. `propose_mitigation` tries the proven 
 - Constraints: explicit human controls for adaptive routing, new links, and candidate-path bound.
 - Existing Advanced diagnostics remain available; no new optimizer dashboard was introduced.
 
-## Performance policy
+## Performance policy and measured envelope
 
 `benchmark:level4-design` measures candidate-path generation, reduced path-LP size/solve, joint MILP size/solve, reconstructed verification, scenario generation, Pareto solve count, and path-vs-arc formulation size at the small reference plus Tier A/B/C workloads where reasonable. Joint routing+design is deliberately not forced at 250/500 nodes merely because deterministic analysis supports those sizes.
+
+Authoritative Level 4A benchmark artifact `level4a-design-benchmark` from run `33291272722`, commit `c017e33db38f38844cbe57cd9c9fb0431f38ad98`:
+
+| Fixture | Result | Runtime |
+| --- | --- | ---: |
+| Lock/replan K-path generation | 2 deterministic path variables | 10.148 ms |
+| Reduced path LP | 40% optimum, verified | 81.281 ms |
+| Joint adaptive MILP | optimal cost 8, 80% peak, verified | 36.470 ms |
+| Reconstructed verification | verified cost 8 / 80% peak | 21.877 ms |
+| Pareto frontier | verified costs 8 / 12 / 16 at 80 / 70 / 60% | 60.138 ms |
+| Scenario-aware loop | converged in 2 iterations, cost 12, verified | 57.890 ms |
+| Tier A path formulation | 288 path vars vs 58,368 arc vars, 202.67× smaller | 4,747.713 ms K-path generation |
+| Tier B path formulation | 600 path vars vs 240,000 arc vars, 400× smaller | 41,574.598 ms K-path generation |
+| Tier C path formulation | 1,200 path vars vs 960,000 arc vars, 800× smaller | 354,660.745 ms K-path generation |
+
+Tier A also completed an optimal joint solve in 4,901.446 ms. Tier B/C deliberately do not attempt the joint design solve. The Tier C K-path runtime establishes the current product boundary: large-network deterministic analysis remains supported, but Level 4A adaptive design is not presented as an interactive 500-node optimizer.
+
+The retained Phase 3.5C browser scale gate also remained green on the same exact commit at 500 nodes / 1,200 links / 400 demands: initial canvas render 1,126.5 ms, worker ChangePlan analysis 954.9 ms, bounded 50-scenario N-1 worker pool 6,652.5 ms, interaction during Tier C worker analysis 63.4 ms, and Tier C ECMP worker analysis 1,462.2 ms.
 
 ## Validation log
 
@@ -93,10 +113,21 @@ M3.5D is extended rather than redesigned. `propose_mitigation` tries the proven 
 - Full validation run `33290711342` reached 120/120 units, typecheck, and production build. Browser validation then exposed two product/test compatibility issues: an obsolete stale-history assertion in the new Level 4A case and adaptive routing being silently enabled for legacy ChangePlans.
 - Compatibility commit: `b33ae21186998367014235a4c7cd04a898840c61`, `fix(level4a): make adaptive routing an explicit opt-in`.
 - Guarded compatibility workflow `33291193470` passed 120/120 units, typecheck, and all 10 affected browser tests (`e2e/level4a-adaptive-design.spec.ts` plus `e2e/phase35a-change-plan.spec.ts`) before publishing that commit. This confirms the existing M3.5A locked-infeasibility behavior is preserved while Level 4A cases explicitly opt into routing redesign.
+- Authoritative full-gate commit: `c017e33db38f38844cbe57cd9c9fb0431f38ad98`.
+- Authoritative full-gate run: `33291272722` — **success**.
+- Unit tests: **120/120 passed**.
+- TypeScript: **passed**.
+- Production build: **passed**.
+- Ordinary Playwright E2E: **44 passed, 2 native-only tests intentionally skipped**.
+- Headed native WebMCP: **2/2 passed**, including the Level 4A human-lock adaptive replan.
+- `benchmark:level2`: **passed**.
+- `benchmark:level3`: **passed**.
+- `benchmark:scale`: **passed**, including 500-node browser/worker measurements.
+- `benchmark:level4-design`: **passed**, with machine-readable JSON and Markdown artifacts uploaded.
 
-## Acceptance still outstanding
+## Acceptance result
 
-Level 4A is not complete until the exact target branch tip passes the additive gate:
+The exact implementation tip passed the complete additive acceptance gate:
 
 - `npm ci`
 - `npm test`
@@ -109,4 +140,4 @@ Level 4A is not complete until the exact target branch tip passes the additive g
 - `npm run benchmark:scale`
 - `npm run benchmark:level4-design`
 
-Final measured benchmark values and exact-head CI identifiers will be recorded after clean GitHub validation.
+**Level 4A status: COMPLETE.**
