@@ -39,7 +39,7 @@ The ChangePlan explicitly controls:
 - K candidate paths, bounded to 1–8;
 - declared candidate-link endpoints/capacity/weight/cost.
 
-The optimizer never fabricates a new-link endpoint or cost.
+The optimizer never fabricates a new-link endpoint or cost. To preserve the M3.5A–D behavior boundary, newly created ChangePlans default to capacity upgrades enabled, adaptive routing disabled, and new links disabled. Routing redesign is therefore an explicit human opt-in before the shared service or WebMCP can fall back to the Level 4A adaptive solver.
 
 ## Required lock/replan reference
 
@@ -49,6 +49,7 @@ The deterministic Level 4A reference encodes:
 - normal SSP uses X→BD and overloads X;
 - legacy capacity-only optimum: X 10→15 Gbps, cost 5;
 - human locks X (modification forbidden, traffic still allowed);
+- human explicitly enables adaptive routing;
 - adaptive optimum: 8 Gbps remains on X→BD and 4 Gbps uses AC→Y;
 - Y upgrades 2→5 Gbps, cost 8;
 - expected route allocation: 66.7% / 33.3%;
@@ -68,13 +69,14 @@ The verifier reconstructs path continuity, demand conservation, action legality,
 
 ## WebMCP
 
-M3.5D is extended rather than redesigned. `propose_mitigation` tries the proven capacity-only solver first and transparently falls back to adaptive design if allowed and needed. One concise state-dependent capability, `compare_mitigation_variants`, exposes a small verified Pareto frontier. Human edits invalidate/cancel stale adaptive work through the same shared application-service authority boundary.
+M3.5D is extended rather than redesigned. `propose_mitigation` tries the proven capacity-only solver first and transparently falls back to adaptive design only when routing redesign is explicitly allowed and needed. One concise state-dependent capability, `compare_mitigation_variants`, exposes a small verified Pareto frontier. Human edits invalidate/cancel stale adaptive work through the same shared application-service authority boundary.
 
 ## UI
 
 - Network: current selected design summary and selected-demand default/proposed route comparison.
 - Plans: compact nondominated design variants and selection.
 - Analysis: adaptive solver/path/verification evidence.
+- Constraints: explicit human controls for adaptive routing, new links, and candidate-path bound.
 - Existing Advanced diagnostics remain available; no new optimizer dashboard was introduced.
 
 ## Performance policy
@@ -88,6 +90,9 @@ M3.5D is extended rather than redesigned. `propose_mitigation` tries the proven 
 - First authoritative clean run: `33280385404`. Clean install and Chromium setup passed; 118/120 unit tests passed. The two failures were isolated to failure-classification precedence and a new integration-test contract, while the core Level 4A mathematical reference cases passed under clean HiGHS execution.
 - Bounded fix commit: `5a90e0d1a9f45a6e3cab0b5b0bbb9ba74fb2c0de`. It gives an active budget precedence when classifying an otherwise lock-constrained infeasible formulation and aligns the shared-service test with the existing proposal-history contract.
 - Focused clean Level 4A suite after those fixes: 9/9 passed in workflow run `33290666979` before publication.
+- Full validation run `33290711342` reached 120/120 units, typecheck, and production build. Browser validation then exposed two product/test compatibility issues: an obsolete stale-history assertion in the new Level 4A case and adaptive routing being silently enabled for legacy ChangePlans.
+- Compatibility commit: `b33ae21186998367014235a4c7cd04a898840c61`, `fix(level4a): make adaptive routing an explicit opt-in`.
+- Guarded compatibility workflow `33291193470` passed 120/120 units, typecheck, and all 10 affected browser tests (`e2e/level4a-adaptive-design.spec.ts` plus `e2e/phase35a-change-plan.spec.ts`) before publishing that commit. This confirms the existing M3.5A locked-infeasibility behavior is preserved while Level 4A cases explicitly opt into routing redesign.
 
 ## Acceptance still outstanding
 
