@@ -1,5 +1,6 @@
 from pathlib import Path
 
+# Executed only by the temporary focused adversarial workflow; remove before final freeze.
 p = Path('packages/graph-engine/src/index.ts')
 s = p.read_text()
 
