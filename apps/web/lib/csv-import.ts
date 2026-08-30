@@ -21,23 +21,36 @@ function parseCsv(text: string, label: string): Array<Record<string, string>> {
   let row: string[] = [];
   let field = '';
   let quoted = false;
+  let quoteClosed = false;
+  const pushField = () => { row.push(field.trim()); field = ''; quoteClosed = false; };
+  const pushRow = () => { pushField(); if (row.some((value) => value.length)) rows.push(row); row = []; };
   for (let index = 0; index < source.length; index += 1) {
     const char = source[index];
     if (quoted) {
       if (char === '"') {
         if (source[index + 1] === '"') { field += '"'; index += 1; }
-        else quoted = false;
+        else { quoted = false; quoteClosed = true; }
       } else field += char;
       continue;
     }
-    if (char === '"') { quoted = true; continue; }
-    if (char === ',') { row.push(field.trim()); field = ''; continue; }
-    if (char === '\n') { row.push(field.trim()); field = ''; if (row.some((value) => value.length)) rows.push(row); row = []; continue; }
+    if (quoteClosed) {
+      if (char === ',') { pushField(); continue; }
+      if (char === '\n') { pushRow(); continue; }
+      if (char === '\r' || char === ' ' || char === '\t') continue;
+      throw new Error(`${label} contains a malformed quoted field.`);
+    }
+    if (char === '"') {
+      if (field.trim().length) throw new Error(`${label} contains a malformed quoted field.`);
+      field = '';
+      quoted = true;
+      continue;
+    }
+    if (char === ',') { pushField(); continue; }
+    if (char === '\n') { pushRow(); continue; }
     if (char !== '\r') field += char;
   }
   if (quoted) throw new Error(`${label} contains an unterminated quoted field.`);
-  row.push(field.trim());
-  if (row.some((value) => value.length)) rows.push(row);
+  pushRow();
   if (!rows.length) throw new Error(`${label} is empty.`);
   const headers = rows[0].map((header) => header.trim());
   if (headers.some((header) => !header)) throw new Error(`${label} contains an empty header.`);
