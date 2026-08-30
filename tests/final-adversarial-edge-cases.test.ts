@@ -4,6 +4,7 @@ import type { NetworkProject } from '../packages/model/src/index.ts';
 import { validateNetworkProject } from '../packages/model/src/index.ts';
 import { routeProject } from '../packages/graph-engine/src/index.ts';
 import { runCapacityAnalysis, runLinkContingencies, runLinkContingenciesAsync } from '../packages/evidence/src/index.ts';
+import { parseCsvBundle } from '../apps/web/lib/csv-import.ts';
 
 function projectBase(id: string): NetworkProject {
   return {
@@ -125,4 +126,44 @@ test('AV-13/AV-14: bounded N-1 never represents partial coverage as PASS or comp
   assert.equal(result.result.verdict, 'CANCELLED');
   assert.equal(result.result.metrics.totalEligibleScenarios, 4);
   assert.equal(result.result.metrics.scenariosTested, 3);
+});
+
+test('AV-17: CSV parser rejects structural, reference, numeric, and identifier corruption', () => {
+  const goodNodes = 'id,name\nA,Alpha\nB,Beta\n';
+  const goodLinks = 'id,source,target,capacityGbps,weight\nAB,A,B,40,1\n';
+  assert.throws(() => parseCsvBundle({ nodesCsv: 'id,id,name\nA,A,Alpha\nB,B,Beta\n', linksCsv: goodLinks }), /duplicate header/i);
+  assert.throws(() => parseCsvBundle({ nodesCsv: 'id,name\nA,Alpha\nA,Again\n', linksCsv: goodLinks }), /duplicate node id|duplicate.*A/i);
+  assert.throws(() => parseCsvBundle({ nodesCsv: goodNodes, linksCsv: 'id,source,target,capacityGbps\nAB,A,MISSING,40\n' }), /unknown node MISSING/i);
+  assert.throws(() => parseCsvBundle({ nodesCsv: goodNodes, linksCsv: 'id,source,target,capacityGbps\nAA,A,A,40\n' }), /cannot connect a node to itself/i);
+  for (const bad of ['NaN', 'Infinity', '-1', '0']) {
+    assert.throws(() => parseCsvBundle({ nodesCsv: goodNodes, linksCsv: `id,source,target,capacityGbps,weight\nAB,A,B,40,${bad}\n` }), /weight.*greater than zero/i);
+  }
+  assert.throws(() => parseCsvBundle({ nodesCsv: goodNodes, linksCsv: 'id,source,target,capacityGbps\nAB,A,B,-1\n' }), /capacityGbps.*greater than zero/i);
+  assert.throws(() => parseCsvBundle({ nodesCsv: goodNodes, linksCsv: 'id,source,target,capacityGbps\nAB,A,B,40,EXTRA\n' }), /more columns than the header/i);
+  assert.throws(() => parseCsvBundle({ nodesCsv: 'id,name\nA,"unterminated\n', linksCsv: goodLinks }), /unterminated quoted field/i);
+});
+
+test('AV-17/F-008: malformed characters after a closing CSV quote are rejected rather than silently normalized', () => {
+  assert.throws(() => parseCsvBundle({
+    nodesCsv: 'id,name\nA,"Alpha"junk\nB,Beta\n',
+    linksCsv: 'id,source,target,capacityGbps\nAB,A,B,40\n',
+  }), /malformed quoted field/i);
+});
+
+test('AV-18/AV-19: late CSV failure is atomic and imported hostile-looking text remains inert data', () => {
+  const existing = projectBase('existing-project');
+  existing.nodes.push({ id: 'SAFE', name: 'Existing' });
+  const before = structuredClone(existing);
+  assert.throws(() => parseCsvBundle({
+    nodesCsv: 'id,name\nA,<script>globalThis.pwned=true</script>\nB,Beta\n',
+    linksCsv: 'id,source,target,capacityGbps\nAB,A,B,40\nBAD,B,MISSING,10\n',
+  }), /unknown node MISSING/i);
+  assert.deepEqual(existing, before, 'failed review must not mutate the currently open project');
+
+  const review = parseCsvBundle({
+    nodesCsv: 'id,name\nA,<script>globalThis.pwned=true</script>\nB,Beta\n',
+    linksCsv: 'id,source,target,capacityGbps\nAB,A,B,40\n',
+  });
+  assert.equal(review.project.nodes[0].name, '<script>globalThis.pwned=true</script>');
+  assert.equal((globalThis as typeof globalThis & { pwned?: boolean }).pwned, undefined);
 });
