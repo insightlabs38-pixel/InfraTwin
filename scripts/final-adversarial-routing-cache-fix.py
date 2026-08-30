@@ -1,38 +1,10 @@
 from pathlib import Path
 
-# Executed only by the temporary focused adversarial workflow; remove before final freeze.
+# Temporary focused patcher for F-004. Remove before the final freeze gate.
 p = Path('packages/graph-engine/src/index.ts')
 s = p.read_text()
 
-old = """export function routingTopologyKey(project: NetworkProject): string {
-  const nodePart = project.nodes.map((node) => `${node.id}:${node.available === false ? 0 : 1}`).sort().join('|');
-  const linkPart = project.links.map((link) => [
-    link.id,
-    link.source,
-    link.target,
-    link.bidirectional === false ? 0 : 1,
-    link.available === false ? 0 : 1,
-    link.weight,
-  ].join(':')).sort().join('|');
-  return `rtopo:${fnv1a(`${nodePart}#${linkPart}`)}`;
-}
-
-export class RoutingSession {
-  topologyKey = '';
-  graph: RoutingGraph | null = null;
-"""
-new = """export function routingTopologyKey(project: NetworkProject): string {
-  const nodePart = project.nodes.map((node) => `${node.id}:${node.available === false ? 0 : 1}`).sort().join('|');
-  const linkPart = project.links.map((link) => [
-    link.id,
-    link.source,
-    link.target,
-    link.bidirectional === false ? 0 : 1,
-    link.available === false ? 0 : 1,
-    link.weight,
-  ].join(':')).sort().join('|');
-  return `rtopo:${fnv1a(`${nodePart}#${linkPart}`)}`;
-}
+cache_key_fn = r'''
 
 /** Exact routing-semantic identity used for cache authority. The compact FNV key above is diagnostics only. */
 export function routingTopologyCacheKey(project: NetworkProject): string {
@@ -44,46 +16,41 @@ export function routingTopologyCacheKey(project: NetworkProject): string {
     .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
   return JSON.stringify(['routing-topology-v2', nodes, links]);
 }
+'''
+class_anchor = "\nexport class RoutingSession {\n  topologyKey = '';\n  graph: RoutingGraph | null = null;"
+class_replacement = cache_key_fn + "\nexport class RoutingSession {\n  /** Compact diagnostic fingerprint; never authoritative for cache reuse. */\n  topologyKey = '';\n  /** Collision-safe exact semantic identity used to authorize graph/source reuse. */\n  cacheKey = '';\n  graph: RoutingGraph | null = null;"
+if class_anchor not in s:
+    raise SystemExit('RoutingSession class anchor not found')
+s = s.replace(class_anchor, class_replacement, 1)
 
-export class RoutingSession {
-  /** Compact diagnostic fingerprint; never authoritative for cache reuse. */
-  topologyKey = '';
-  /** Collision-safe exact semantic identity used to authorize graph/source reuse. */
-  cacheKey = '';
-  graph: RoutingGraph | null = null;
-"""
-if old not in s:
-    raise SystemExit('routing topology/class target not found')
-s = s.replace(old, new)
-
-old = """  reset(nextTopologyKey = ''): void {
+reset_anchor = """  reset(nextTopologyKey = ''): void {
     this.topologyKey = nextTopologyKey;
     this.graph = null;
 """
-new = """  reset(nextTopologyKey = '', nextCacheKey = ''): void {
+reset_replacement = """  reset(nextTopologyKey = '', nextCacheKey = ''): void {
     this.topologyKey = nextTopologyKey;
     this.cacheKey = nextCacheKey;
     this.graph = null;
 """
-if old not in s:
-    raise SystemExit('routing reset target not found')
-s = s.replace(old, new)
+if reset_anchor not in s:
+    raise SystemExit('RoutingSession reset anchor not found')
+s = s.replace(reset_anchor, reset_replacement, 1)
 
-old = """function graphFor(project: NetworkProject, session: RoutingSession): RoutingGraph {
+graph_anchor = """function graphFor(project: NetworkProject, session: RoutingSession): RoutingGraph {
   const key = routingTopologyKey(project);
   if (session.topologyKey !== key) session.reset(key);
   if (session.graph) {
 """
-new = """function graphFor(project: NetworkProject, session: RoutingSession): RoutingGraph {
+graph_replacement = """function graphFor(project: NetworkProject, session: RoutingSession): RoutingGraph {
   const topologyKey = routingTopologyKey(project);
   const cacheKey = routingTopologyCacheKey(project);
   if (session.cacheKey !== cacheKey) session.reset(topologyKey, cacheKey);
   else session.topologyKey = topologyKey;
   if (session.graph) {
 """
-if old not in s:
-    raise SystemExit('graphFor target not found')
-s = s.replace(old, new)
+if graph_anchor not in s:
+    raise SystemExit('graphFor anchor not found')
+s = s.replace(graph_anchor, graph_replacement, 1)
 p.write_text(s)
 
 p = Path('tests/final-adversarial.test.ts')
@@ -98,7 +65,9 @@ addition = """import {
 } from '../packages/graph-engine/src/index.ts';
 """
 if addition not in s:
-    s = s.replace(anchor, anchor + addition)
+    if anchor not in s:
+        raise SystemExit('final adversarial import anchor not found')
+    s = s.replace(anchor, anchor + addition, 1)
 
 marker = "test('AV-06/F-004: ordinary RoutingSession cache cannot be poisoned by a 32-bit topology collision'"
 if marker not in s:
@@ -114,7 +83,6 @@ test('AV-06/F-004: ordinary RoutingSession cache cannot be poisoned by a 32-bit 
     { id: 'q13952', source: 'B', target: 'A', capacityGbps: 10, weight: 1, bidirectional: false },
   ]);
 
-  // The public compact key deliberately remains stable for diagnostics. This pair proves why it cannot authorize reuse.
   assert.equal(routingTopologyKey(reachable), 'rtopo:7fc538c4');
   assert.equal(routingTopologyKey(unreachable), 'rtopo:7fc538c4');
   assert.notEqual(routingTopologyCacheKey(reachable), routingTopologyCacheKey(unreachable));
