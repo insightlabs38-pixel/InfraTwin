@@ -6,6 +6,8 @@ import {
   designTopologyFingerprint,
   generateCandidatePaths,
   generateCandidatePathsReference,
+  optimizeAdaptiveDesign,
+  optimizeDesignPareto,
   level4PathCachePolicy,
   resetLevel4PathCaches,
 } from '../packages/optimizer/src/index.ts';
@@ -196,3 +198,26 @@ test('Level 4B caches are bounded and evict historical topology state', () => {
   assert.equal(policy.maxGraphEntries, 32);
   assert.equal(policy.maxRouteEntries, 4096);
 });
+
+test('Level 4B Pareto variants reuse the exact same candidate path set', async () => {
+  resetLevel4PathCaches();
+  const project = createLevel4ReplanReference();
+  const variants = await optimizeDesignPareto(project, { maxCandidatePaths:5, targetUtilizationPct:80 }, { targets:[80,70,60] });
+  assert.ok(variants.length > 0);
+  const first = variants[0].candidatePathSet;
+  for (const variant of variants) {
+    assert.equal(variant.candidatePathSet, first);
+    assert.equal(variant.candidatePathSet.hash, first.hash);
+  }
+  assert.equal(first.generationDiagnostics?.cacheMisses, project.demands.length);
+});
+
+test('Level 4B adaptive optimizer reports user-facing preparation, model, solve, and verification phases', async () => {
+  resetLevel4PathCaches();
+  const project = createLevel4ReplanReference();
+  const phases:string[] = [];
+  const result = await optimizeAdaptiveDesign(project, { maxCandidatePaths:5, targetUtilizationPct:80 }, { onProgress: phase => phases.push(phase) });
+  assert.ok(result.variant);
+  assert.deepEqual(phases, ['Preparing route alternatives','Building optimization model','Solving design','Verifying proposal']);
+});
+
