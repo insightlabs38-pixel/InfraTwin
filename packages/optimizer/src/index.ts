@@ -566,3 +566,4 @@ export function verifyCapacityCandidate(project: NetworkProject, candidate: Cand
 }
 
 export * from "./level4-design.ts";
+export * from "./level4-path-engine.ts";
