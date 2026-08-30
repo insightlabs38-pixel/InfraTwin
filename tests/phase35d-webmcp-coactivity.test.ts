@@ -329,3 +329,40 @@ test('M3.5D security boundary validates raw handler inputs before shared-state m
 
   registration.dispose();
 });
+
+
+test('AV-21/F-002: concurrent WebMCP refreshes register every active tool exactly once', async () => {
+  const h = makeHarness();
+  const active = new Set<string>();
+  const calls = new Map<string, number>();
+  const context: ModelContextLike = {
+    async registerTool(tool, options) {
+      if (active.has(tool.name)) {
+        const error = new Error('Duplicate tool name');
+        error.name = 'InvalidStateError';
+        throw error;
+      }
+      active.add(tool.name);
+      calls.set(tool.name, (calls.get(tool.name) ?? 0) + 1);
+      options?.signal?.addEventListener('abort', () => active.delete(tool.name), { once: true });
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    },
+  };
+  const registration = await registerCollaborativeTools(context, h.service);
+  for (const name of CORE_TOOL_NAMES) assert.equal(calls.get(name), 1);
+
+  await addFailingHumanOutage(h);
+  await Promise.all(Array.from({ length: 8 }, () => registration.refresh()));
+  for (const name of [...CORE_TOOL_NAMES, ...VIOLATION_TOOL_NAMES, ...MITIGATION_TOOL_NAMES]) {
+    assert.ok(active.has(name), `${name} must be active after concurrent refreshes`);
+    assert.equal(calls.get(name), 1, `${name} must be registered exactly once`);
+  }
+
+  h.service.setPlanConstraint('targetUtilizationPct', 70, 'human');
+  await Promise.all(Array.from({ length: 8 }, () => registration.refresh()));
+  for (const name of [...VIOLATION_TOOL_NAMES, ...MITIGATION_TOOL_NAMES, ...PROPOSAL_TOOL_NAMES]) assert.equal(active.has(name), false);
+  for (const name of CORE_TOOL_NAMES) assert.equal(calls.get(name), 1, `${name} must not be re-registered while continuously active`);
+
+  registration.dispose();
+  assert.equal(active.size, 0, 'dispose must revoke every active registration');
+});

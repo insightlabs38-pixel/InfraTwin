@@ -18,6 +18,20 @@ test.use({
 
 type NativeToolResult = unknown;
 
+function collectRegistrationErrors(page: import('@playwright/test').Page): string[] {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => {
+    const message = `${error.name}: ${error.message}`;
+    if (/Duplicate tool name|InfraTwin WebMCP.*(?:registration|refresh) failed/i.test(message)) errors.push(message);
+  });
+  page.on('console', (message) => {
+    if (message.type() !== 'error') return;
+    const text = message.text();
+    if (/Duplicate tool name|InfraTwin WebMCP.*(?:registration|refresh) failed/i.test(text)) errors.push(text);
+  });
+  return errors;
+}
+
 async function nativeToolNames(page: import('@playwright/test').Page): Promise<string[]> {
   return page.evaluate(async () => {
     const context = (document as Document & { modelContext?: { getTools(): Promise<Array<{ name: string }>> } }).modelContext;
@@ -43,6 +57,7 @@ async function executeNative(page: import('@playwright/test').Page, name: string
 }
 
 test('M3.5D native WebMCP host — real document.modelContext discovery/execution shares human selection and plan state', async ({ page, browser }, testInfo) => {
+  const registrationErrors = collectRegistrationErrors(page);
   await page.goto('/');
   await expect(page.getByTestId('topology-canvas')).toBeVisible();
   const browserVersion = browser.version();
@@ -162,6 +177,7 @@ test('M3.5D native WebMCP host — real document.modelContext discovery/executio
   const path = testInfo.outputPath('m35d-native-webmcp-eval.json');
   await writeFile(path, JSON.stringify(evaluation, null, 2));
   await testInfo.attach('m35d-native-webmcp-eval', { path, contentType: 'application/json' });
+  expect(registrationErrors, `Native registration emitted errors: ${registrationErrors.join(' | ')}`).toEqual([]);
 });
 
 
@@ -179,6 +195,7 @@ async function importLevel4Reference(page: import('@playwright/test').Page) {
 }
 
 test('Level 4A native WebMCP replan — human protects X and native propose_mitigation returns verified Y alternative', async ({ page, browser }, testInfo) => {
+  const registrationErrors = collectRegistrationErrors(page);
   await page.goto('/');
   await expect(page.getByTestId('topology-canvas')).toBeVisible();
   await expect.poll(() => nativeToolNames(page), { timeout: 20_000 }).toEqual(expect.arrayContaining(['inspect_workspace', 'analyze_plan']));
@@ -221,4 +238,5 @@ test('Level 4A native WebMCP replan — human protects X and native propose_miti
   const path = testInfo.outputPath('level4a-native-webmcp-replan.json');
   await writeFile(path, JSON.stringify(evaluation, null, 2));
   await testInfo.attach('level4a-native-webmcp-replan', { path, contentType: 'application/json' });
+  expect(registrationErrors, `Native registration emitted errors: ${registrationErrors.join(' | ')}`).toEqual([]);
 });
