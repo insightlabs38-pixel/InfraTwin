@@ -81,6 +81,14 @@ M3.5D is extended rather than redesigned. `propose_mitigation` tries the proven 
 
 `benchmark:level4-design` measures candidate-path generation, reduced path-LP size/solve, joint MILP size/solve, reconstructed verification, scenario generation, Pareto solve count, and path-vs-arc formulation size at the small reference plus Tier A/B/C workloads where reasonable. Joint routing+design is deliberately not forced at 250/500 nodes merely because deterministic analysis supports those sizes.
 
+## Validation log
+
+- Implementation commit: `904c1d34fdfa968e3c68350c38afb7094ad955b8`.
+- Additive Level 4A CI-gate commit: `d75cbb62be51f6bf18aea3f71029b026317d6d19`.
+- First authoritative clean run: `33280385404`. Clean install and Chromium setup passed; 118/120 unit tests passed. The two failures were isolated to failure-classification precedence and a new integration-test contract, while the core Level 4A mathematical reference cases passed under clean HiGHS execution.
+- Bounded fix commit: `5a90e0d1a9f45a6e3cab0b5b0bbb9ba74fb2c0de`. It gives an active budget precedence when classifying an otherwise lock-constrained infeasible formulation and aligns the shared-service test with the existing proposal-history contract.
+- Focused clean Level 4A suite after those fixes: 9/9 passed in workflow run `33290666979` before publication.
+
 ## Acceptance still outstanding
 
 Level 4A is not complete until the exact target branch tip passes the additive gate:
