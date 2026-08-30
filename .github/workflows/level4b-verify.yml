@@ -1,0 +1,28 @@
+name: Level4B Verify
+
+on:
+  push:
+    branches: [feature/level-4b-high-scale-design]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run benchmark:level4-scale
+      - name: Upload focused benchmark
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: level4b-focused-benchmark
+          path: |
+            benchmark-results/level4-scale.json
+            benchmark-results/level4-scale.md
+          if-no-files-found: ignore
+          retention-days: 7
