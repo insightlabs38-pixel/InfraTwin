@@ -1,5 +1,17 @@
 from pathlib import Path
 
+engine = Path('packages/optimizer/src/level4-path-engine.ts')
+engine_text = engine.read_text()
+engine_text = engine_text.replace(
+    "  constructor(private readonly compare: (left: T, right: T) => number) {}",
+    "  private readonly compare: (left: T, right: T) => number;\n  constructor(compare: (left: T, right: T) => number) { this.compare = compare; }",
+)
+engine_text = engine_text.replace(
+    "  constructor(private readonly limit: number) {}",
+    "  private readonly limit: number;\n  constructor(limit: number) { this.limit = limit; }",
+)
+engine.write_text(engine_text)
+
 path = Path('packages/optimizer/src/level4-design.ts')
 text = path.read_text()
 
