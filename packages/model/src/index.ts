@@ -615,7 +615,7 @@ export function createChangePlan(project: NetworkProject, name = 'New Change Pla
     name: name.trim() || 'New Change Plan',
     baseModelHash: modelHash(project),
     changes: [],
-    constraints: { targetUtilizationPct: 80, budgetCostUnits: null, requireN1: false, protectedServiceClassIds: [], allowedMitigationActions: { capacityUpgrades: true, routingChanges: true, newLinks: false }, maxCandidatePaths: 5, candidateLinkOptions: [] },
+    constraints: { targetUtilizationPct: 80, budgetCostUnits: null, requireN1: false, protectedServiceClassIds: [], allowedMitigationActions: { capacityUpgrades: true, routingChanges: false, newLinks: false }, maxCandidatePaths: 5, candidateLinkOptions: [] },
     restrictions: { lockedLinkIds: [], lockedNodeIds: [], forbiddenRoutingLinkIds: [], forbiddenRoutingNodeIds: [] },
     proposals: [],
     history: [{ id: 'history-1', actor: 'human', occurredAt: now, action: 'created_plan', summary: `Created ${name.trim() || 'New Change Plan'}` }],
