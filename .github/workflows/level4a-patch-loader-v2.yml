@@ -21,7 +21,7 @@ jobs:
           ref: tmp/level-4a-adaptive-design
           fetch-depth: 0
 
-      - name: Apply two bounded unit fixes
+      - name: Apply bounded unit fixes
         shell: bash
         run: |
           set -euo pipefail
@@ -45,11 +45,15 @@ jobs:
 
           test_file = Path('tests/level4a-adaptive-design.test.ts')
           text = test_file.read_text()
-          old = "let plan=createChangePlan('level4a-app-plan','Level 4A shared plan')"
-          new = "let plan=createChangePlan(project,'Level 4A shared plan',{id:'level4a-app-plan',now:'2026-08-29T00:00:00.000Z'})"
-          if text.count(old) != 1:
-              raise SystemExit('createChangePlan replacement did not match exactly once')
-          test_file.write_text(text.replace(old, new))
+          replacements = [
+              ("let plan=createChangePlan('level4a-app-plan','Level 4A shared plan')", "let plan=createChangePlan(project,'Level 4A shared plan',{id:'level4a-app-plan',now:'2026-08-29T00:00:00.000Z'})"),
+              ("assert.ok(!plan.proposals.some(proposal=>proposal.change.target.kind==='link'&&proposal.change.target.id==='X'));", "assert.ok(!plan.proposals.some(proposal=>proposal.state==='pending'&&proposal.change.target.kind==='link'&&proposal.change.target.id==='X'));assert.ok(plan.proposals.some(proposal=>proposal.state==='pending'&&proposal.change.target.kind==='link'&&proposal.change.target.id==='Y'));"),
+          ]
+          for old, new in replacements:
+              if text.count(old) != 1:
+                  raise SystemExit(f'test replacement did not match exactly once: {old}')
+              text = text.replace(old, new)
+          test_file.write_text(text)
           PY
 
           git diff --check
@@ -72,5 +76,5 @@ jobs:
           git add packages/optimizer/src/level4-design.ts tests/level4a-adaptive-design.test.ts
           git diff --cached --check
           test "$(git diff --cached --name-only | wc -l)" -eq 2
-          git commit -m "fix(level4a): align infeasibility and replan test contracts"
+          git commit -m "fix(level4a): align infeasibility and replan contracts"
           git push origin HEAD:tmp/level-4a-adaptive-design
