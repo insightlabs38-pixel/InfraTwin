@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  changePlanEvidenceStamp,
   createChangePlan,
   modelHash,
   setCandidateProposals,
@@ -128,6 +129,10 @@ test('AV-11/F-003: proposal acceptance rejects a candidate after the base networ
   project = structuredClone(project);
   project.links[0].weight = 2;
   assert.notEqual(plan.baseModelHash, modelHash(project));
+  assert.equal(service.capabilityState().proposalStale, true);
+  assert.equal(service.capabilityState().canDecideProposal, false);
+  assert.equal(service.getWorkspaceSummary().proposal.stale, true);
+  assert.equal(service.inspectPlan().proposals[0].stale, true);
   assert.throws(() => service.acceptProposalChange(proposalId, 'agent'), /stale.*base network changed/i);
   assert.equal(plan.proposals[0].state, 'pending');
   assert.equal(plan.changes.length, 0);
@@ -161,4 +166,51 @@ test('AV-06/F-004: ordinary RoutingSession cache cannot be poisoned by a 32-bit 
   assert.deepEqual(second, independent, 'session reuse must equal a cache-independent reference after a colliding topology change');
   assert.equal(second.routes[0].reachable, false);
   assert.equal(session.stats.graphBuilds, 2, 'both exact topologies must build distinct graphs despite the diagnostic digest collision');
+});
+
+
+test('AV-13/F-006: stale complete N-1 evidence is not advertised as current complete coverage', () => {
+  const project = collisionProject('n1-freshness', [
+    { id: 'L1', source: 'A', target: 'B', capacityGbps: 10, weight: 1, bidirectional: false },
+    { id: 'L2', source: 'B', target: 'C', capacityGbps: 10, weight: 1, bidirectional: false },
+  ]);
+  let plan = createChangePlan(project, 'N-1 freshness', { id: 'n1-plan', now: '2026-08-30T22:10:00.000Z' });
+  const stamp = changePlanEvidenceStamp(project, plan);
+  const service = new CollaborativeWorkspaceService({
+    getProject: () => project,
+    getPlan: () => plan,
+    setPlan: (next) => { plan = next; },
+    getContingencies: () => ({ analysis: { status: 'complete' } as never, stamp }),
+  });
+  assert.equal(service.capabilityState().hasCompleteN1, true);
+  service.setPlanConstraint('targetUtilizationPct', 75, 'human');
+  assert.equal(service.capabilityState().hasCompleteN1, false, 'complete but stale N-1 evidence must not be advertised as current coverage');
+});
+
+
+test('AV-09/F-007: agent cannot remove human routing restrictions through the shared service', () => {
+  const project = collisionProject('routing-restriction-authority', [
+    { id: 'L1', source: 'A', target: 'B', capacityGbps: 10, weight: 1, bidirectional: false },
+    { id: 'L2', source: 'B', target: 'C', capacityGbps: 10, weight: 1, bidirectional: false },
+  ]);
+  let plan = createChangePlan(project, 'Routing restriction authority', { id: 'routing-plan', now: '2026-08-30T22:20:00.000Z' });
+  const service = new CollaborativeWorkspaceService({
+    getProject: () => project,
+    getPlan: () => plan,
+    setPlan: (next) => { plan = next; },
+  });
+
+  service.setRoutingRestriction('link', 'L1', true, 'human');
+  service.setRoutingRestriction('node', 'B', true, 'human');
+  assert.ok(plan.restrictions.forbiddenRoutingLinkIds.includes('L1'));
+  assert.ok(plan.restrictions.forbiddenRoutingNodeIds.includes('B'));
+  assert.throws(() => service.setRoutingRestriction('link', 'L1', false, 'agent'), /Agent cannot remove a human routing restriction/);
+  assert.throws(() => service.setRoutingRestriction('node', 'B', false, 'agent'), /Agent cannot remove a human routing restriction/);
+  assert.ok(plan.restrictions.forbiddenRoutingLinkIds.includes('L1'));
+  assert.ok(plan.restrictions.forbiddenRoutingNodeIds.includes('B'));
+
+  service.setRoutingRestriction('link', 'L1', false, 'human');
+  service.setRoutingRestriction('node', 'B', false, 'human');
+  assert.equal(plan.restrictions.forbiddenRoutingLinkIds.includes('L1'), false);
+  assert.equal(plan.restrictions.forbiddenRoutingNodeIds.includes('B'), false);
 });
