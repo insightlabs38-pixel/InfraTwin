@@ -50,6 +50,17 @@ text = text.replace(
 )
 path.write_text(text)
 
+# Fix the progress message payload: the field must contain the phase string, not the callback itself.
+path = Path('apps/web/workers/optimizer.worker.ts')
+text = path.read_text()
+text = text.replace(
+    "const progress=(phase:string)=>self.postMessage({taskId:request.taskId,kind:'progress',progress} satisfies Response);",
+    "const sendProgress=(phase:string):void=>{self.postMessage({taskId:request.taskId,kind:'progress',progress:phase} satisfies Response);};",
+    1,
+)
+text = text.replace("onProgress:progress", "onProgress:sendProgress")
+path.write_text(text)
+
 # Add focused tests for Pareto reuse and phase reporting.
 path = Path('tests/level4b-path-engine.test.ts')
 text = path.read_text()
