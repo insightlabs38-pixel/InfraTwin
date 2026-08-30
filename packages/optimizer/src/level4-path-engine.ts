@@ -110,7 +110,8 @@ function checkAbort(signal?: AbortSignal): void {
 
 class BinaryMinHeap<T> {
   private values: T[] = [];
-  constructor(private readonly compare: (left: T, right: T) => number) {}
+  private readonly compare: (left: T, right: T) => number;
+  constructor(compare: (left: T, right: T) => number) { this.compare = compare; }
   get size(): number { return this.values.length; }
   push(value: T): void {
     this.values.push(value);
@@ -147,7 +148,8 @@ class BinaryMinHeap<T> {
 
 class BoundedLru<K, V> {
   private readonly values = new Map<K, V>();
-  constructor(private readonly limit: number) {}
+  private readonly limit: number;
+  constructor(limit: number) { this.limit = limit; }
   get size(): number { return this.values.size; }
   get(key: K): V | undefined {
     const value = this.values.get(key);
