@@ -132,16 +132,31 @@ export function routingTopologyKey(project: NetworkProject): string {
   return `rtopo:${fnv1a(`${nodePart}#${linkPart}`)}`;
 }
 
+/** Exact routing-semantic identity used for cache authority. The compact FNV key above is diagnostics only. */
+export function routingTopologyCacheKey(project: NetworkProject): string {
+  const nodes = project.nodes
+    .map((node) => [node.id, node.available === false ? 0 : 1] as const)
+    .sort((left, right) => left[0].localeCompare(right[0]));
+  const links = project.links
+    .map((link) => [link.id, link.source, link.target, link.bidirectional === false ? 0 : 1, link.available === false ? 0 : 1, link.weight] as const)
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  return JSON.stringify(['routing-topology-v2', nodes, links]);
+}
+
 export class RoutingSession {
+  /** Compact diagnostic fingerprint; never authoritative for cache reuse. */
   topologyKey = '';
+  /** Collision-safe exact semantic identity used to authorize graph/source reuse. */
+  cacheKey = '';
   graph: RoutingGraph | null = null;
   singleSourceTrees = new Map<string, SingleSourceTree>();
   sourceDistances = new Map<string, Map<string, number>>();
   reverseDistances = new Map<string, Map<string, number>>();
   readonly stats: RoutingSessionStats = { graphBuilds: 0, graphReuses: 0, sourceComputations: 0, sourceReuses: 0, reverseComputations: 0, reverseReuses: 0 };
 
-  reset(nextTopologyKey = ''): void {
+  reset(nextTopologyKey = '', nextCacheKey = ''): void {
     this.topologyKey = nextTopologyKey;
+    this.cacheKey = nextCacheKey;
     this.graph = null;
     this.singleSourceTrees.clear();
     this.sourceDistances.clear();
@@ -176,8 +191,10 @@ function buildArcs(project: NetworkProject): RoutingGraph {
 }
 
 function graphFor(project: NetworkProject, session: RoutingSession): RoutingGraph {
-  const key = routingTopologyKey(project);
-  if (session.topologyKey !== key) session.reset(key);
+  const topologyKey = routingTopologyKey(project);
+  const cacheKey = routingTopologyCacheKey(project);
+  if (session.cacheKey !== cacheKey) session.reset(topologyKey, cacheKey);
+  else session.topologyKey = topologyKey;
   if (session.graph) {
     session.stats.graphReuses += 1;
     return session.graph;

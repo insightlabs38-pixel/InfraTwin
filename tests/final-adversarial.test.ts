@@ -10,6 +10,13 @@ import {
 } from '../packages/model/src/index.ts';
 import { CollaborativeWorkspaceService } from '../packages/application/src/index.ts';
 import {
+  createRoutingSession,
+  routeProject,
+  routeProjectReference,
+  routingTopologyCacheKey,
+  routingTopologyKey,
+} from '../packages/graph-engine/src/index.ts';
+import {
   createPathEngineProfile,
   designTopologyCacheKey,
   generateRoutePaths,
@@ -126,4 +133,32 @@ test('AV-11/F-003: proposal acceptance rejects a candidate after the base networ
   assert.equal(plan.changes.length, 0);
   assert.throws(() => service.acceptAllProposalChanges('agent'), /stale.*base network changed/i);
   assert.equal(plan.proposals[0].state, 'pending');
+});
+
+
+test('AV-06/F-004: ordinary RoutingSession cache cannot be poisoned by a 32-bit topology collision', () => {
+  const reachable = collisionProject('routing-collision-reachable', [
+    { id: 'x174651', source: 'A', target: 'B', capacityGbps: 10, weight: 1, bidirectional: false },
+    { id: 'y174651', source: 'B', target: 'C', capacityGbps: 10, weight: 1, bidirectional: false },
+  ]);
+  const unreachable = collisionProject('routing-collision-unreachable', [
+    { id: 'p13952', source: 'C', target: 'B', capacityGbps: 10, weight: 1, bidirectional: false },
+    { id: 'q13952', source: 'B', target: 'A', capacityGbps: 10, weight: 1, bidirectional: false },
+  ]);
+
+  // The public compact key deliberately remains stable for diagnostics. This pair proves why it cannot authorize reuse.
+  assert.equal(routingTopologyKey(reachable), 'rtopo:7fc538c4');
+  assert.equal(routingTopologyKey(unreachable), 'rtopo:7fc538c4');
+  assert.notEqual(routingTopologyCacheKey(reachable), routingTopologyCacheKey(unreachable));
+
+  const session = createRoutingSession();
+  const first = routeProject(reachable, session);
+  assert.equal(first.routes[0].reachable, true);
+  assert.deepEqual(first.routes[0].nodeIds, ['A', 'B', 'C']);
+
+  const second = routeProject(unreachable, session);
+  const independent = routeProjectReference(unreachable);
+  assert.deepEqual(second, independent, 'session reuse must equal a cache-independent reference after a colliding topology change');
+  assert.equal(second.routes[0].reachable, false);
+  assert.equal(session.stats.graphBuilds, 2, 'both exact topologies must build distinct graphs despite the diagnostic digest collision');
 });
