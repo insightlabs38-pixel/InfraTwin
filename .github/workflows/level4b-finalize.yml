@@ -30,7 +30,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/optimizer/src/level4-design.ts apps/web/components/workbench-m35d-stage3.tsx tests/level4b-path-engine.test.ts
+          git add packages/optimizer/src/level4-design.ts apps/web/components/workbench-m35d-stage3.tsx apps/web/workers/optimizer.worker.ts tests/level4b-path-engine.test.ts
           git diff --cached --exit-code && exit 0
           git commit -m "feat(level4b): add adaptive progress and Pareto reuse gates [level4b-finalized]"
           git push origin HEAD:feature/level-4b-high-scale-design
