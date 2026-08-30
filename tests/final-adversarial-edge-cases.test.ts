@@ -65,7 +65,10 @@ test('AV-14/AV-30: blank network analysis and N-1 return explicit empty complete
   assert.equal(validateNetworkProject(blank).valid, true);
   const routed = routeProject(blank);
   assert.deepEqual(routed.routes, []);
-  assert.deepEqual(routed.linkLoads, {});
+  assert.deepEqual(routed.linkLoadsGbps, {});
+  assert.deepEqual(routed.linkUtilizationPct, {});
+  assert.equal(routed.peakUtilizationPct, 0);
+  assert.deepEqual(routed.unroutedDemandIds, []);
 
   const capacity = runCapacityAnalysis(blank);
   assert.equal(capacity.result.verdict, 'PASS');
