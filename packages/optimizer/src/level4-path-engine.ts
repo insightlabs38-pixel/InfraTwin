@@ -52,6 +52,9 @@ export interface PathEngineProfile {
 }
 
 export interface CompiledDesignGraph {
+  /** Exact canonical route-semantic identity used for cache authority. */
+  cacheKey: string;
+  /** Compact diagnostic digest only; collisions must never grant cache reuse. */
   fingerprint: string;
   nodeIds: readonly string[];
   nodeIndexById: ReadonlyMap<string, number>;
@@ -203,25 +206,37 @@ export function level4PathCachePolicy(): { graphEntries: number; routeEntries: n
   return { graphEntries: graphCache.size, routeEntries: routeCache.size, maxGraphEntries: GRAPH_CACHE_LIMIT, maxRouteEntries: ROUTE_CACHE_LIMIT };
 }
 
+function canonicalRows(rows: readonly unknown[][]): string[] {
+  return rows.map((row) => JSON.stringify(row)).sort();
+}
+
 function semanticCandidateRows(options: DesignPathTopologyOptions): string[] {
   if (!options.includeCandidateLinks) return [];
   const lockedNodes = new Set(options.lockedNodeIds);
-  return options.candidateLinkOptions
+  return canonicalRows(options.candidateLinkOptions
     .filter((option) => !lockedNodes.has(option.source) && !lockedNodes.has(option.target))
-    .map((option) => [option.id, option.source, option.target, option.bidirectional === false ? 0 : 1, option.weight].join(':'))
-    .sort();
+    .map((option) => [option.id, option.source, option.target, option.bidirectional === false ? 0 : 1, option.weight]));
 }
 
-/** Only route-feasibility/cost semantics participate. Bandwidth, capacity, budget, upgrade costs and utilization targets do not. */
+/**
+ * Exact, unambiguous cache authority for route feasibility and route cost.
+ * Bandwidth, physical capacity, budget, upgrade costs and utilization targets are intentionally excluded because they do not change path geometry/cost.
+ * K and diversity are route-selection parameters and therefore live in the route cache key rather than this compiled-topology key.
+ */
+export function designTopologyCacheKey(project: NetworkProject, options: DesignPathTopologyOptions): string {
+  return JSON.stringify([
+    'l4-topology-v2',
+    canonicalRows(project.nodes.map((node) => [node.id, node.available === false ? 0 : 1])),
+    canonicalRows(project.links.map((link) => [link.id, link.source, link.target, link.bidirectional === false ? 0 : 1, link.available === false ? 0 : 1, link.weight])),
+    [...options.forbiddenRoutingNodeIds].sort(),
+    [...options.forbiddenRoutingLinkIds].sort(),
+    semanticCandidateRows(options),
+  ]);
+}
+
+/** Compact diagnostic digest only. Never use this digest alone as cache authority. */
 export function designTopologyFingerprint(project: NetworkProject, options: DesignPathTopologyOptions): string {
-  const nodes = project.nodes.map((node) => `${node.id}:${node.available === false ? 0 : 1}`).sort();
-  const links = project.links.map((link) => [link.id, link.source, link.target, link.bidirectional === false ? 0 : 1, link.available === false ? 0 : 1, link.weight].join(':')).sort();
-  const restrictions = [
-    [...options.forbiddenRoutingNodeIds].sort().join(','),
-    [...options.forbiddenRoutingLinkIds].sort().join(','),
-    semanticCandidateRows(options).join('|'),
-  ].join('#');
-  return `l4topo:${fnv1a(`${nodes.join('|')}#${links.join('|')}#${restrictions}`)}`;
+  return `l4topo:${fnv1a(designTopologyCacheKey(project, options))}`;
 }
 
 function edgeCompare(left: Omit<CompiledDesignEdge, 'id' | 'sourceIndex' | 'targetIndex'>, right: Omit<CompiledDesignEdge, 'id' | 'sourceIndex' | 'targetIndex'>): number {
@@ -236,9 +251,10 @@ function approximateStringBytes(value: string): number { return value.length * 2
 
 export function compileDesignGraph(project: NetworkProject, options: DesignPathTopologyOptions, signal?: AbortSignal): CompiledDesignGraph {
   checkAbort(signal);
-  const fingerprint = designTopologyFingerprint(project, options);
-  const cached = graphCache.get(fingerprint);
+  const cacheKey = designTopologyCacheKey(project, options);
+  const cached = graphCache.get(cacheKey);
   if (cached) return cached;
+  const fingerprint = `l4topo:${fnv1a(cacheKey)}`;
 
   const nodeIds = project.nodes.map((node) => node.id).sort();
   const nodeIndexById = new Map(nodeIds.map((id, index) => [id, index]));
@@ -267,11 +283,11 @@ export function compileDesignGraph(project: NetworkProject, options: DesignPathT
   }));
   const adjacency: number[][] = Array.from({ length: nodeIds.length }, () => []);
   for (const edge of edges) if (edge.sourceIndex >= 0 && edge.targetIndex >= 0) adjacency[edge.sourceIndex].push(edge.id);
-  let approximateBytes = nodeIds.reduce((sum, id) => sum + approximateStringBytes(id), 0) + nodeIds.length * 16 + edges.length * 72;
+  let approximateBytes = approximateStringBytes(cacheKey) + nodeIds.reduce((sum, id) => sum + approximateStringBytes(id), 0) + nodeIds.length * 16 + edges.length * 72;
   for (const edge of edges) approximateBytes += approximateStringBytes(edge.linkId) + approximateStringBytes(edge.source) + approximateStringBytes(edge.target);
   approximateBytes += adjacency.reduce((sum, ids) => sum + ids.length * 8, 0);
-  const compiled: CompiledDesignGraph = { fingerprint, nodeIds, nodeIndexById, edges, adjacency, approximateBytes };
-  graphCache.set(fingerprint, compiled);
+  const compiled: CompiledDesignGraph = { cacheKey, fingerprint, nodeIds, nodeIndexById, edges, adjacency, approximateBytes };
+  graphCache.set(cacheKey, compiled);
   return compiled;
 }
 
@@ -455,7 +471,7 @@ function chooseDiversePaths(raw: InternalRawPath[], k: number, penalty: number, 
 }
 
 function routeCacheKey(graph: CompiledDesignGraph, source: string, target: string, options: DesignPathTopologyOptions): string {
-  return `${graph.fingerprint}|${source}|${target}|k=${options.maxCandidatePaths}|div=${round(options.diversityPenalty, 9)}`;
+  return JSON.stringify(['l4-route-v2', graph.cacheKey, source, target, options.maxCandidatePaths, options.diversityPenalty]);
 }
 
 function approximatePathBytes(paths: readonly InternalRawPath[]): number {
@@ -478,10 +494,10 @@ export function generateRoutePaths(
 ): PathEngineRawPath[] {
   checkAbort(signal);
   profile.pathGenerationRequests += 1;
-  const fingerprint = designTopologyFingerprint(project, options);
+  const cacheKey = designTopologyCacheKey(project, options);
   const beforeGraph = graphCache.size;
   const compileStarted = now();
-  let graph = graphCache.get(fingerprint);
+  let graph = graphCache.get(cacheKey);
   if (graph) {
     profile.graphReuses += 1;
   } else {
