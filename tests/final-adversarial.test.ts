@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { NetworkProject } from '../packages/model/src/index.ts';
+import {
+  createChangePlan,
+  modelHash,
+  setCandidateProposals,
+  type CandidatePlan,
+  type ChangePlan,
+  type NetworkProject,
+} from '../packages/model/src/index.ts';
+import { CollaborativeWorkspaceService } from '../packages/application/src/index.ts';
 import {
   createPathEngineProfile,
   designTopologyCacheKey,
@@ -83,4 +91,39 @@ test('AV-06/F-001: legacy 32-bit topology collision cannot poison the Level 4B g
   assert.equal(secondProfile.cacheHits, 0, 'colliding legacy digest must never grant route-cache reuse');
   assert.equal(secondProfile.cacheMisses, 1);
   assert.deepEqual(second, [], 'the second topology has no directed A→C route');
+});
+
+
+test('AV-11/F-003: proposal acceptance rejects a candidate after the base network changes', () => {
+  let project = collisionProject('proposal-authority', [
+    { id: 'L1', source: 'A', target: 'B', capacityGbps: 10, weight: 1, bidirectional: false },
+    { id: 'L2', source: 'B', target: 'C', capacityGbps: 10, weight: 1, bidirectional: false },
+  ]);
+  let plan: ChangePlan = createChangePlan(project, 'Authority test', { id: 'authority-plan', now: '2026-08-30T22:00:00.000Z' });
+  const candidate: CandidatePlan = {
+    id: 'authority-candidate',
+    name: 'Upgrade L1',
+    baseModelHash: modelHash(project),
+    commands: [{ id: 'upgrade-l1', type: 'set_link_capacity', actor: 'agent', args: { linkId: 'L1', capacityGbps: 20 }, createdAt: '2026-08-30T22:00:01.000Z' }],
+    objective: { name: 'cost', value: 1, unit: 'cost-units' },
+    rationaleEvidenceIds: [],
+  };
+  plan = setCandidateProposals(project, plan, candidate, '2026-08-30T22:00:02.000Z');
+  const proposalId = plan.proposals[0].id;
+  const service = new CollaborativeWorkspaceService({
+    getProject: () => project,
+    getPlan: () => plan,
+    setPlan: (next) => { plan = next; },
+  });
+
+  // Simulate a project replacement/revision racing with stale proposal UI state. The old service path
+  // checked only sourcePlanHash and would accept this proposal against the wrong base network.
+  project = structuredClone(project);
+  project.links[0].weight = 2;
+  assert.notEqual(plan.baseModelHash, modelHash(project));
+  assert.throws(() => service.acceptProposalChange(proposalId, 'agent'), /stale.*base network changed/i);
+  assert.equal(plan.proposals[0].state, 'pending');
+  assert.equal(plan.changes.length, 0);
+  assert.throws(() => service.acceptAllProposalChanges('agent'), /stale.*base network changed/i);
+  assert.equal(plan.proposals[0].state, 'pending');
 });
