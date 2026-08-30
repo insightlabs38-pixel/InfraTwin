@@ -64,3 +64,14 @@ jobs:
           path: benchmark-results/*.json
           if-no-files-found: ignore
           retention-days: 14
+      - run: npm run benchmark:level4-design
+      - name: Upload Level 4A design benchmark output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: level4a-design-benchmark
+          path: |
+            benchmark-results/level4-design.json
+            benchmark-results/level4-design.md
+          if-no-files-found: ignore
+          retention-days: 14

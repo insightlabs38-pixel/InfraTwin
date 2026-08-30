@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
+import { createLevel4ReplanReference } from '../packages/scenarios/src/index.ts';
 
 // This is a dedicated headed lane. The normal E2E suite keeps it skipped so the rest of
 // the product can still be tested in ordinary headless Chromium.
@@ -161,4 +162,63 @@ test('M3.5D native WebMCP host — real document.modelContext discovery/executio
   const path = testInfo.outputPath('m35d-native-webmcp-eval.json');
   await writeFile(path, JSON.stringify(evaluation, null, 2));
   await testInfo.attach('m35d-native-webmcp-eval', { path, contentType: 'application/json' });
+});
+
+
+async function importLevel4Reference(page: import('@playwright/test').Page) {
+  await page.getByTestId('import-json').click();
+  await page.getByRole('button', { name: 'Canonical JSON' }).click();
+  await page.getByTestId('json-import-file').setInputFiles({
+    name: 'level4a-replan-reference.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(createLevel4ReplanReference())),
+  });
+  await expect(page.getByTestId('import-review')).toBeVisible();
+  await page.getByTestId('open-imported-network').click();
+  await expect(page.getByTestId('topology-link-X')).toBeVisible();
+  await page.getByText('Constraints', { exact: true }).click();
+  await page.getByTestId('allow-routing-changes').check();
+}
+
+test('Level 4A native WebMCP replan — human protects X and native propose_mitigation returns verified Y alternative', async ({ page, browser }, testInfo) => {
+  await page.goto('/');
+  await expect(page.getByTestId('topology-canvas')).toBeVisible();
+  await expect.poll(() => nativeToolNames(page), { timeout: 20_000 }).toEqual(expect.arrayContaining(['inspect_workspace', 'analyze_plan']));
+  await importLevel4Reference(page);
+
+  const baseline = await executeNative(page, 'analyze_plan') as Record<string, any>;
+  expect(baseline.verdict).toBe('FAIL');
+  await expect.poll(() => nativeToolNames(page), { timeout: 20_000 }).toEqual(expect.arrayContaining(['propose_mitigation']));
+  const first = await executeNative(page, 'propose_mitigation') as Record<string, any>;
+  expect(first.mode).toBe('capacity-only');
+  expect(first.objective).toBe(5);
+  await expect(page.getByTestId('candidate-proposals')).toContainText('X', { timeout: 30_000 });
+
+  await page.getByTestId('topology-link-X').click();
+  await page.getByTestId('lock-link-X').check();
+  const locked = await executeNative(page, 'inspect_plan') as Record<string, any>;
+  expect(locked.restrictions.lockedLinkIds).toContain('X');
+  await executeNative(page, 'analyze_plan');
+  await expect.poll(() => nativeToolNames(page), { timeout: 20_000 }).toEqual(expect.arrayContaining(['propose_mitigation']));
+  const second = await executeNative(page, 'propose_mitigation') as Record<string, any>;
+  expect(second.mode).toBe('adaptive-design');
+  expect(second.objective).toBe(8);
+  expect(second.verification).toBe('verified');
+  await expect(page.getByTestId('candidate-proposals')).toContainText('Y', { timeout: 30_000 });
+  await expect(page.getByTestId('candidate-proposals')).not.toContainText('Set X capacity');
+  await expect(page.getByTestId('network-design-summary')).toContainText(/cost 8/i);
+
+  const verification = await executeNative(page, 'verify_plan') as Record<string, any>;
+  expect(verification.status).toBe('verified');
+  expect(verification.adaptiveDesignVerification?.status).toBe('verified');
+
+  const evaluation = {
+    browserVersion: browser.version(), api: 'document.modelContext', native: true,
+    sequence: [
+      { phase: 'before-lock', proposal: first },
+      { phase: 'human-lock', lockedLinkIds: locked.restrictions.lockedLinkIds },
+      { phase: 'after-lock', proposal: second, verification },
+    ],
+  };
+  const path = testInfo.outputPath('level4a-native-webmcp-replan.json');
+  await writeFile(path, JSON.stringify(evaluation, null, 2));
+  await testInfo.attach('level4a-native-webmcp-replan', { path, contentType: 'application/json' });
 });
