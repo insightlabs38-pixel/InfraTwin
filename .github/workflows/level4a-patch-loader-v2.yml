@@ -1,4 +1,4 @@
-name: Level4A Unit Fix Executor
+name: Level4A Browser Compatibility Fix Executor
 
 on:
   push:
@@ -21,11 +21,11 @@ jobs:
           ref: tmp/level-4a-adaptive-design
           fetch-depth: 0
 
-      - name: Apply bounded unit fixes
+      - name: Apply explicit adaptive-routing opt-in and E2E contract fixes
         shell: bash
         run: |
           set -euo pipefail
-          EXPECTED_TARGET="d75cbb62be51f6bf18aea3f71029b026317d6d19"
+          EXPECTED_TARGET="5ff34f9e16a58783da7642a3cc779192c819c0c7"
           ACTUAL_TARGET="$(git rev-parse HEAD)"
           if [ "$ACTUAL_TARGET" != "$EXPECTED_TARGET" ]; then
             echo "Refusing to apply: target moved from $EXPECTED_TARGET to $ACTUAL_TARGET" >&2
@@ -35,46 +35,86 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          optimizer = Path('packages/optimizer/src/level4-design.ts')
-          text = optimizer.read_text()
-          old = "if(s.includes('infeasible')){if(r.lockedLinkIds.length||r.lockedNodeIds.length)return'LOCKS_REMOVE_ALL_FEASIBLE_ACTIONS' as const;if(r.budgetCostUnits!==null)return'BUDGET_INFEASIBLE' as const;return'SCENARIO_REQUIREMENTS_INFEASIBLE' as const}"
-          new = "if(s.includes('infeasible')){if(r.budgetCostUnits!==null)return'BUDGET_INFEASIBLE' as const;if(r.lockedLinkIds.length||r.lockedNodeIds.length)return'LOCKS_REMOVE_ALL_FEASIBLE_ACTIONS' as const;return'SCENARIO_REQUIREMENTS_INFEASIBLE' as const}"
-          if text.count(old) != 1:
-              raise SystemExit('classification replacement did not match exactly once')
-          optimizer.write_text(text.replace(old, new))
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: replacement matched {count} times, expected exactly once: {old[:120]}')
+              p.write_text(text.replace(old, new))
 
-          test_file = Path('tests/level4a-adaptive-design.test.ts')
-          text = test_file.read_text()
-          replacements = [
-              ("let plan=createChangePlan('level4a-app-plan','Level 4A shared plan')", "let plan=createChangePlan(project,'Level 4A shared plan',{id:'level4a-app-plan',now:'2026-08-29T00:00:00.000Z'})"),
-              ("assert.ok(!plan.proposals.some(proposal=>proposal.change.target.kind==='link'&&proposal.change.target.id==='X'));", "assert.ok(!plan.proposals.some(proposal=>proposal.state==='pending'&&proposal.change.target.kind==='link'&&proposal.change.target.id==='X'));assert.ok(plan.proposals.some(proposal=>proposal.state==='pending'&&proposal.change.target.kind==='link'&&proposal.change.target.id==='Y'));"),
-          ]
-          for old, new in replacements:
-              if text.count(old) != 1:
-                  raise SystemExit(f'test replacement did not match exactly once: {old}')
-              text = text.replace(old, new)
-          test_file.write_text(text)
+          replace_once(
+              'packages/model/src/index.ts',
+              "constraints: { targetUtilizationPct: 80, budgetCostUnits: null, requireN1: false, protectedServiceClassIds: [], allowedMitigationActions: { capacityUpgrades: true, routingChanges: true, newLinks: false }, maxCandidatePaths: 5, candidateLinkOptions: [] },",
+              "constraints: { targetUtilizationPct: 80, budgetCostUnits: null, requireN1: false, protectedServiceClassIds: [], allowedMitigationActions: { capacityUpgrades: true, routingChanges: false, newLinks: false }, maxCandidatePaths: 5, candidateLinkOptions: [] },",
+          )
+
+          replace_once(
+              'packages/application/src/index.ts',
+              "p.constraints.allowedMitigationActions??{capacityUpgrades:true,routingChanges:true,newLinks:false}",
+              "p.constraints.allowedMitigationActions??{capacityUpgrades:true,routingChanges:false,newLinks:false}",
+          )
+          replace_once(
+              'packages/application/src/index.ts',
+              "adaptiveAllowed=plan.constraints.allowedMitigationActions?.routingChanges??true",
+              "adaptiveAllowed=plan.constraints.allowedMitigationActions?.routingChanges??false",
+          )
+
+          replace_once(
+              'apps/web/components/workbench-m35d-stage5.tsx',
+              "(plan.constraints.allowedMitigationActions?.routingChanges ?? true)",
+              "(plan.constraints.allowedMitigationActions?.routingChanges ?? false)",
+          )
+
+          replace_once(
+              'tests/level4a-adaptive-design.test.ts',
+              "now:()=> '2026-08-29T00:00:00.000Z'});const analyzed=await service.analyzePlan(undefined,'agent');",
+              "now:()=> '2026-08-29T00:00:00.000Z'});service.setPlanConstraint('allowedMitigationActions',{...plan.constraints.allowedMitigationActions,routingChanges:true},'human');const analyzed=await service.analyzePlan(undefined,'agent');",
+          )
+
+          replace_once(
+              'e2e/level4a-adaptive-design.spec.ts',
+              "await page.getByTestId('open-imported-network').click(); await expect(page.getByTestId('topology-link-X')).toBeVisible(); }",
+              "await page.getByTestId('open-imported-network').click(); await expect(page.getByTestId('topology-link-X')).toBeVisible(); await page.getByText('Constraints',{exact:true}).click(); await page.getByTestId('allow-routing-changes').check(); }",
+          )
+          replace_once(
+              'e2e/level4a-adaptive-design.spec.ts',
+              "await expect(page.getByTestId('proposal-Y')).toContainText('5 Gbps');await expect(page.getByTestId('proposal-X')).toContainText(/stale/i);});",
+              "await expect(page.getByTestId('proposal-Y')).toContainText('5 Gbps');});",
+          )
+
+          replace_once(
+              'e2e/phase35d-native-webmcp.spec.ts',
+              "  await expect(page.getByTestId('topology-link-X')).toBeVisible();\n}",
+              "  await expect(page.getByTestId('topology-link-X')).toBeVisible();\n  await page.getByText('Constraints', { exact: true }).click();\n  await page.getByTestId('allow-routing-changes').check();\n}",
+          )
           PY
 
           git diff --check
-          git diff -- packages/optimizer/src/level4-design.ts tests/level4a-adaptive-design.test.ts
+          git diff -- packages/model/src/index.ts packages/application/src/index.ts apps/web/components/workbench-m35d-stage5.tsx tests/level4a-adaptive-design.test.ts e2e/level4a-adaptive-design.spec.ts e2e/phase35d-native-webmcp.spec.ts
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
 
       - run: npm ci
-      - name: Run focused Level 4A unit suite
-        run: node --experimental-strip-types --test tests/level4a-adaptive-design.test.ts
+      - name: Run complete unit suite
+        run: npm test
+      - name: Run typecheck
+        run: npm run typecheck
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run affected browser acceptance lanes
+        run: npx playwright test e2e/level4a-adaptive-design.spec.ts e2e/phase35a-change-plan.spec.ts
 
-      - name: Commit and push bounded fixes
+      - name: Commit and push compatibility fixes
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/optimizer/src/level4-design.ts tests/level4a-adaptive-design.test.ts
+          git add packages/model/src/index.ts packages/application/src/index.ts apps/web/components/workbench-m35d-stage5.tsx tests/level4a-adaptive-design.test.ts e2e/level4a-adaptive-design.spec.ts e2e/phase35d-native-webmcp.spec.ts
           git diff --cached --check
-          test "$(git diff --cached --name-only | wc -l)" -eq 2
-          git commit -m "fix(level4a): align infeasibility and replan contracts"
+          test "$(git diff --cached --name-only | wc -l)" -eq 6
+          git commit -m "fix(level4a): make adaptive routing an explicit opt-in"
           git push origin HEAD:tmp/level-4a-adaptive-design
