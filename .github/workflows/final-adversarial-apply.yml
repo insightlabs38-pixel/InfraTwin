@@ -1,0 +1,34 @@
+name: Final Adversarial Apply
+
+on:
+  push:
+    branches: [final/adversarial-validation]
+    paths:
+      - scripts/final-adversarial-webmcp-fix.py
+      - .github/workflows/final-adversarial-apply.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: final/adversarial-validation
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: python3 scripts/final-adversarial-webmcp-fix.py
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/webmcp/src/m35d.ts apps/web/components/workbench-m35d-stage3.tsx tests/phase35d-webmcp-coactivity.test.ts e2e/phase35d-native-webmcp.spec.ts
+          git diff --cached --quiet || git commit -m "fix(final): serialize WebMCP registration refresh"
+          git push origin HEAD:final/adversarial-validation
