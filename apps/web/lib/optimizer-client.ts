@@ -1,7 +1,7 @@
 import type { CandidatePlan, NetworkProject } from '@infratwin/model';
 import type { AdaptiveDesignRequirements, AdaptiveDesignResult, AdaptiveDesignVariant, CapacityOptimizationResult, CapacityPlanRequirements, CandidateVerification, TrafficAllocationResult } from '@infratwin/optimizer';
 
-interface WorkerResponse { taskId: string; ok: boolean; result?: unknown; error?: string }
+interface WorkerResponse { taskId: string; kind:'result'|'progress'; ok?: boolean; result?: unknown; error?: string; progress?:string }
 type WorkerWaiter = { resolve:(worker:Worker)=>void; reject:(error:Error)=>void; signal?:AbortSignal; onAbort?:()=>void };
 
 const idleWorkers:Worker[]=[];
@@ -28,7 +28,7 @@ function destroyWorker(worker:Worker):void{
 }
 export function browserOptimizerWorkerPoolStats():{live:number;idle:number;queued:number;max:number}{return{live:liveWorkerCount,idle:idleWorkers.length,queued:workerWaiters.length,max:maxWorkerCount()};}
 
-async function runWorker<T>(payload: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+async function runWorker<T>(payload: Record<string, unknown>, signal?: AbortSignal, onProgress?:(phase:string)=>void): Promise<T> {
   if (signal?.aborted) throw abortError();
   const worker=await acquireWorker(signal);
   if(signal?.aborted){releaseWorker(worker);throw abortError();}
@@ -39,7 +39,7 @@ async function runWorker<T>(payload: Record<string, unknown>, signal?: AbortSign
     const onAbort=()=>{cleanup(false);reject(abortError());};
     signal?.addEventListener('abort',onAbort,{once:true});
     worker.onerror=(event)=>{cleanup(false);reject(new Error(event.message || 'Optimizer worker crashed.'));};
-    worker.onmessage=(event:MessageEvent<WorkerResponse>)=>{if(event.data.taskId!==taskId)return;cleanup(true);if(!event.data.ok)reject(new Error(event.data.error || 'Optimizer worker failed.'));else resolve(event.data.result as T);};
+    worker.onmessage=(event:MessageEvent<WorkerResponse>)=>{if(event.data.taskId!==taskId)return;if(event.data.kind==='progress'){if(event.data.progress)onProgress?.(event.data.progress);return;}cleanup(true);if(!event.data.ok)reject(new Error(event.data.error || 'Optimizer worker failed.'));else resolve(event.data.result as T);};
     worker.postMessage({ ...payload, taskId });
   });
 }
@@ -47,5 +47,5 @@ export function probeBrowserOptimizer(signal?: AbortSignal): Promise<{ solver: s
 export function optimizeCapacityInBrowser(project: NetworkProject, requirements: CapacityPlanRequirements, timeLimitMs = 8_000, signal?: AbortSignal): Promise<CapacityOptimizationResult> { return runWorker({ kind: 'capacity', project, requirements, timeLimitMs }, signal); }
 export function optimizeRoutingInBrowser(project: NetworkProject, timeLimitMs = 5_000, signal?: AbortSignal): Promise<TrafficAllocationResult> { return runWorker({ kind: 'routing', project, timeLimitMs }, signal); }
 export function verifyCandidateInBrowser(project: NetworkProject, candidate: CandidatePlan, requirements: CapacityPlanRequirements, signal?: AbortSignal): Promise<CandidateVerification> { return runWorker({ kind: 'verify', project, candidate, requirements }, signal); }
-export function optimizeAdaptiveDesignInBrowser(project: NetworkProject, requirements: AdaptiveDesignRequirements, timeLimitMs = 10_000, signal?: AbortSignal, sourcePlanHash?: string): Promise<AdaptiveDesignResult> { return runWorker({ kind: 'adaptive-design', project, requirements, timeLimitMs, sourcePlanHash }, signal); }
-export function optimizeDesignParetoInBrowser(project: NetworkProject, requirements: AdaptiveDesignRequirements, timeLimitMs = 10_000, signal?: AbortSignal, sourcePlanHash?: string): Promise<AdaptiveDesignVariant[]> { return runWorker({ kind: 'adaptive-pareto', project, requirements, timeLimitMs, sourcePlanHash }, signal); }
+export function optimizeAdaptiveDesignInBrowser(project: NetworkProject, requirements: AdaptiveDesignRequirements, timeLimitMs = 10_000, signal?: AbortSignal, sourcePlanHash?: string, onProgress?:(phase:string)=>void): Promise<AdaptiveDesignResult> { return runWorker({ kind: 'adaptive-design', project, requirements, timeLimitMs, sourcePlanHash }, signal, onProgress); }
+export function optimizeDesignParetoInBrowser(project: NetworkProject, requirements: AdaptiveDesignRequirements, timeLimitMs = 10_000, signal?: AbortSignal, sourcePlanHash?: string, onProgress?:(phase:string)=>void): Promise<AdaptiveDesignVariant[]> { return runWorker({ kind: 'adaptive-pareto', project, requirements, timeLimitMs, sourcePlanHash }, signal, onProgress); }
