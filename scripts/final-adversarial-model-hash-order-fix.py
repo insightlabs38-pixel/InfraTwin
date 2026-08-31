@@ -5,9 +5,10 @@ p = Path('packages/model/src/index.ts')
 s = p.read_text()
 old = """export function semanticProjectValue(project: NetworkProject): NetworkProject {\n  const semantic = cloneProject(project);\n  semantic.nodes = semantic.nodes.map(({ x: _x, y: _y, ...node }) => node);\n  if (semantic.metadata) semantic.metadata = stripPresentationMetadata(semantic.metadata) as Record<string, unknown>;\n  return semantic;\n}\n"""
 new = """export function semanticProjectValue(project: NetworkProject): NetworkProject {\n  const semantic = cloneProject(project);\n  const compareId = <T extends { id: string }>(left: T, right: T) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0;\n  // These canonical collections are validated to have unique IDs, so insertion order is document presentation/history, not engineering semantics.\n  semantic.nodes = semantic.nodes.map(({ x: _x, y: _y, ...node }) => node).sort(compareId);\n  semantic.links = semantic.links.sort(compareId);\n  semantic.demands = semantic.demands.sort(compareId);\n  semantic.serviceClasses = semantic.serviceClasses.sort(compareId);\n  if (semantic.metadata) semantic.metadata = stripPresentationMetadata(semantic.metadata) as Record<string, unknown>;\n  return semantic;\n}\n"""
-if old not in s:
-    raise SystemExit('semanticProjectValue anchor not found')
-s = s.replace(old, new, 1)
+if old in s:
+    s = s.replace(old, new, 1)
+elif new not in s:
+    raise SystemExit('semanticProjectValue is neither baseline nor expected F-014 form')
 p.write_text(s)
 
 # The flagship document is unchanged; this is the intentional v2 semantic-hash golden after order canonicalization.
@@ -15,7 +16,8 @@ p = Path('tests/phase35b-scalable-workspace.test.ts')
 s = p.read_text()
 old_hash = "const FLAGSHIP_HASH = 'sha256:661d1e8c85aea919e8379981ad45f0554d9fe613e18aa52808f1797624fa0e65';"
 new_hash = "const FLAGSHIP_HASH = 'sha256:e656f0b020a350eea75217e5321746ee194e57fceeb9ee06e1cd2e270d5f223b';"
-if old_hash not in s:
-    raise SystemExit('flagship hash golden anchor not found')
-s = s.replace(old_hash, new_hash, 1)
+if old_hash in s:
+    s = s.replace(old_hash, new_hash, 1)
+elif new_hash not in s:
+    raise SystemExit('flagship hash golden is neither baseline nor expected F-014 value')
 p.write_text(s)
