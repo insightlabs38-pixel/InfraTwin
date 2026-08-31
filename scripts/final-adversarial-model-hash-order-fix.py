@@ -9,3 +9,13 @@ if old not in s:
     raise SystemExit('semanticProjectValue anchor not found')
 s = s.replace(old, new, 1)
 p.write_text(s)
+
+# The flagship document is unchanged; this is the intentional v2 semantic-hash golden after order canonicalization.
+p = Path('tests/phase35b-scalable-workspace.test.ts')
+s = p.read_text()
+old_hash = "const FLAGSHIP_HASH = 'sha256:661d1e8c85aea919e8379981ad45f0554d9fe613e18aa52808f1797624fa0e65';"
+new_hash = "const FLAGSHIP_HASH = 'sha256:e656f0b020a350eea75217e5321746ee194e57fceeb9ee06e1cd2e270d5f223b';"
+if old_hash not in s:
+    raise SystemExit('flagship hash golden anchor not found')
+s = s.replace(old_hash, new_hash, 1)
+p.write_text(s)
