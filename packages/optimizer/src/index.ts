@@ -118,7 +118,7 @@ export function normalizeSolverStatus(rawStatus: string, hasIncumbent = false): 
   if (normalized.includes('time limit') || normalized.includes('time_limit')) {
     return { status, proof: hasIncumbent ? 'feasible-incumbent' : 'unknown', timedOut: true };
   }
-  return { status, proof: hasIncumbent ? 'feasible-incumbent' : 'unknown', timedOut: false };
+  return { status, proof: 'unknown', timedOut: false };
 }
 
 async function loadHighs(options: SolverRunOptions): Promise<HighsInstance> {
