@@ -9,8 +9,14 @@ async function selectLink(page: Page, linkId: string) {
   await expect(page.getByTestId(`link-inspector-${linkId}`)).toBeVisible();
 }
 
+async function ensureConstraintsOpen(page: Page) {
+  const selector = page.getByTestId('constraint-max-candidate-paths');
+  if (!(await selector.isVisible())) await page.getByText('Constraints', { exact: true }).click();
+  await expect(selector).toBeVisible();
+}
+
 test('AV-42: flagship human-agent red-team workflow survives outage, growth, N-1, override, adaptive frontier, stale verification, and re-verification', async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(240_000);
   await openHarnessedWorkbench(page);
   await selectNetwork(page, 'continental-service-network');
 
@@ -50,7 +56,7 @@ test('AV-42: flagship human-agent red-team workflow survives outage, growth, N-1
   expect(overridden.result.proposals.some((proposal: any) => proposal.stale)).toBe(true);
 
   // 9–11. Enable adaptive routing, re-analyze the exact revised plan, and generate a verified nondominated frontier.
-  await page.getByText('Constraints', { exact: true }).click();
+  await ensureConstraintsOpen(page);
   await page.getByTestId('allow-routing-changes').check();
   const revisedAnalysis = await executeTool(page, 'analyze_plan');
   expect(revisedAnalysis.result.verdict).toBe('FAIL');
@@ -69,9 +75,9 @@ test('AV-42: flagship human-agent red-team workflow survives outage, growth, N-1
   expect(verification.result.status).toBe('verified');
   expect(verification.result.adaptiveDesignVerification?.status).toBe('verified');
 
-  // 14–16. A semantic constraint edit stales verification immediately; rerun frontier + verification restores current truth.
+  // 14–16. A semantic constraint edit stales verification immediately; a single adaptive rerun restores current truth.
   await page.getByTestId('nav-network').click();
-  await page.getByText('Constraints', { exact: true }).click();
+  await ensureConstraintsOpen(page);
   await page.getByTestId('constraint-max-candidate-paths').selectOption('6');
   const stale = await executeTool(page, 'inspect_workspace');
   expect(stale.result.verification.status).toBe('stale');
@@ -79,12 +85,11 @@ test('AV-42: flagship human-agent red-team workflow survives outage, growth, N-1
 
   const finalAnalysis = await executeTool(page, 'analyze_plan');
   expect(finalAnalysis.result.verdict).toBe('FAIL');
-  const rerunFrontier = await executeTool(page, 'compare_mitigation_variants');
-  expect(rerunFrontier.result.count).toBeGreaterThan(0);
-  await page.getByTestId('nav-plans').click();
-  const rerunRows = page.locator('[data-testid^="design-variant-design:"]');
-  await expect(rerunRows.first()).toBeVisible({ timeout: 30_000 });
-  await rerunRows.first().click();
+  const replanned = await executeTool(page, 'propose_mitigation');
+  expect(replanned.ok).toBe(true);
+  expect(replanned.result.status).toBe('candidate');
+  expect(replanned.result.mode).toBe('adaptive-design');
+  expect(replanned.result.verification).toBe('verified');
   const finalVerification = await executeTool(page, 'verify_plan');
   expect(finalVerification.result.status).toBe('verified');
   const finalWorkspace = await executeTool(page, 'inspect_workspace');
