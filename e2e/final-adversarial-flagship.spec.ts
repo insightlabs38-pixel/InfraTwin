@@ -37,7 +37,7 @@ test('AV-42: flagship human-agent red-team workflow survives outage, growth, N-1
   expect(firstProposal.ok).toBe(true);
   expect(firstProposal.result.status).toBe('candidate');
   const firstPlan = await executeTool(page, 'inspect_plan');
-  const preferredLinks = [...new Set(firstPlan.result.proposals
+  const preferredLinks: string[] = [...new Set<string>((firstPlan.result.proposals as any[])
     .filter((proposal: any) => proposal.state === 'pending' && !proposal.stale && proposal.target?.kind === 'link')
     .map((proposal: any) => String(proposal.target.id)))];
   expect(preferredLinks.length).toBeGreaterThan(0);
