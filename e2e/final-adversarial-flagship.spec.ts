@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { executeTool, openHarnessedWorkbench, selectNetwork } from './webmcp-harness';
+import { executeTool, expectActive, openHarnessedWorkbench, selectNetwork } from './webmcp-harness';
 
 const paymentDemandIds = Array.from({ length: 10 }, (_, index) => `PAY-NECE-${String(index + 1).padStart(2, '0')}`);
 
@@ -90,4 +90,38 @@ test('AV-42: flagship human-agent red-team workflow survives outage, growth, N-1
   const finalWorkspace = await executeTool(page, 'inspect_workspace');
   expect(finalWorkspace.result.verification.status).toBe('verified');
   expect(finalWorkspace.result.verification.current).toBe(true);
+});
+
+test('AV-37: clear and reload cannot preserve ghost plan/proposal state and WebMCP reconstructs for the new document', async ({ page }) => {
+  test.setTimeout(60_000);
+  await openHarnessedWorkbench(page);
+  await selectNetwork(page, 'maintenance-trap');
+  await executeTool(page, 'add_plan_change', { type: 'disable_link', linkId: 'L1' });
+  const analysis = await executeTool(page, 'analyze_plan');
+  expect(analysis.result.verdict).toBe('FAIL');
+  const proposal = await executeTool(page, 'propose_mitigation');
+  expect(proposal.ok).toBe(true);
+  const before = await executeTool(page, 'inspect_workspace');
+  expect(before.result.plan.changeCount).toBeGreaterThan(0);
+  expect(before.result.proposal.present).toBe(true);
+
+  // Product reset is intentionally browser-local and must clear derived state atomically.
+  await page.getByTestId('nav-plans').click();
+  await page.getByTestId('clear-plan').click();
+  const cleared = await executeTool(page, 'inspect_workspace');
+  expect(cleared.result.plan.changeCount).toBe(0);
+  expect(cleared.result.proposal.present).toBe(false);
+  expect(cleared.result.verification.status).toBe('not-run');
+  expect(cleared.result.design.state).toBe('not-run');
+
+  // State is intentionally nonpersistent across reload. A new document must not resurrect a plan or proposal.
+  await page.reload();
+  await expect(page.getByTestId('topology-canvas')).toBeVisible();
+  await expectActive(page, ['inspect_workspace', 'inspect_selection', 'add_plan_change', 'analyze_plan']);
+  const reloaded = await executeTool(page, 'inspect_workspace');
+  expect(reloaded.result.project.id).toBe('continental-service-network');
+  expect(reloaded.result.plan.changeCount).toBe(0);
+  expect(reloaded.result.proposal.present).toBe(false);
+  expect(reloaded.result.verification.status).toBe('not-run');
+  expect(reloaded.result.design.state).toBe('not-run');
 });
