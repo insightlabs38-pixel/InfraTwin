@@ -41,19 +41,19 @@ new = """export function addPlanChange(plan: ChangePlan, change: PlanChange, now
   const next = cloneChangePlan(plan);
   if (next.changes.some((item) => item.id === change.id)) throw new Error(`Duplicate plan change id ${change.id}`);
   if (change.type === 'disable_link' || change.type === 'enable_link') {
-    const previous = [...next.changes].reverse().find((item) => (item.type === 'disable_link' || item.type === 'enable_link') && item.linkId === change.linkId);
-    if (previous?.type === change.type) throw new Error(`Link ${change.linkId} is already ${change.type === 'disable_link' ? 'disabled' : 'enabled'} by the current ordered Change Plan.`);
+    const previous = [...next.changes].reverse().find((item) => (item.type === 'disable_link' || item.type === 'enable_link') && item.target.kind === 'link' && item.target.id === change.target.id);
+    if (previous?.type === change.type) throw new Error(`Link ${change.target.id} is already ${change.type === 'disable_link' ? 'disabled' : 'enabled'} by the current ordered Change Plan.`);
   }
   if (change.type === 'disable_node' || change.type === 'enable_node') {
-    const previous = [...next.changes].reverse().find((item) => (item.type === 'disable_node' || item.type === 'enable_node') && item.nodeId === change.nodeId);
-    if (previous?.type === change.type) throw new Error(`Node ${change.nodeId} is already ${change.type === 'disable_node' ? 'disabled' : 'enabled'} by the current ordered Change Plan.`);
+    const previous = [...next.changes].reverse().find((item) => (item.type === 'disable_node' || item.type === 'enable_node') && item.target.kind === 'node' && item.target.id === change.target.id);
+    if (previous?.type === change.type) throw new Error(`Node ${change.target.id} is already ${change.type === 'disable_node' ? 'disabled' : 'enabled'} by the current ordered Change Plan.`);
   }
   next.changes.push(JSON.parse(JSON.stringify(change)) as PlanChange);
 """
 text = replace_or_verify(text, old, new, 'model availability guard')
 model.write_text(text)
 
-# Correct the WebMCP red-test harness: the boundary rejects synchronously before tool execution.
+# Direct top-level schema failures are synchronous; handler-level semantic validation is a rejected Promise.
 test_path = Path('tests/final-adversarial-webmcp-inputs.test.ts')
 text = test_path.read_text()
 blocks = [
@@ -78,23 +78,25 @@ blocks = [
     () => (h.tools.get('inspect_workspace')!.execute as any)(null),
     /object/i,
   );"""),
-("""  await assert.rejects(
-    Promise.resolve(h.tools.get('inspect_violation')!.execute({ violationId: 123 as any })),
-    /violationId.*string|string.*violationId/i,
-  );""", """  assert.throws(
-    () => h.tools.get('inspect_violation')!.execute({ violationId: 123 as any }),
-    /violationId.*string|string.*violationId/i,
-  );"""),
-("""  await assert.rejects(
-    Promise.resolve(h.tools.get('focus_violation')!.execute({ violationId: { id: 'capacity:L3' } as any })),
-    /violationId.*string|string.*violationId/i,
-  );""", """  assert.throws(
-    () => h.tools.get('focus_violation')!.execute({ violationId: { id: 'capacity:L3' } as any }),
-    /violationId.*string|string.*violationId/i,
-  );"""),
 ]
 for index, (old_block, new_block) in enumerate(blocks):
-    text = replace_or_verify(text, old_block, new_block, f'webmcp test block {index}')
+    text = replace_or_verify(text, old_block, new_block, f'webmcp synchronous test block {index}')
+
+# Revert any prior incorrect synchronous assertions for optional-ID handler validation.
+text = text.replace("""  assert.throws(
+    () => h.tools.get('inspect_violation')!.execute({ violationId: 123 as any }),
+    /violationId.*string|string.*violationId/i,
+  );""", """  await assert.rejects(
+    h.tools.get('inspect_violation')!.execute({ violationId: 123 as any }),
+    /violationId.*string|string.*violationId/i,
+  );""")
+text = text.replace("""  assert.throws(
+    () => h.tools.get('focus_violation')!.execute({ violationId: { id: 'capacity:L3' } as any }),
+    /violationId.*string|string.*violationId/i,
+  );""", """  await assert.rejects(
+    h.tools.get('focus_violation')!.execute({ violationId: { id: 'capacity:L3' } as any }),
+    /violationId.*string|string.*violationId/i,
+  );""")
 test_path.write_text(text)
 
 # Correct the scale/repeated-action harness and prove inverse availability transitions remain valid.
@@ -113,10 +115,10 @@ text = text.replace('assert.equal(routedTwice.revisionHash, routedHash', 'assert
 old_tail = """  assert.equal(h.plan.changes.filter((change) => change.type === 'disable_link' && change.linkId === linkId).length, 1);
 });
 """
-new_tail = """  assert.equal(h.plan.changes.filter((change) => change.type === 'disable_link' && change.linkId === linkId).length, 1);
+new_tail = """  assert.equal(h.plan.changes.filter((change) => change.type === 'disable_link' && change.target.kind === 'link' && change.target.id === linkId).length, 1);
   h.service.addPlanChange({ type: 'enable_link', linkId }, 'human');
   h.service.addPlanChange({ type: 'disable_link', linkId }, 'human');
-  assert.equal(h.plan.changes.filter((change) => change.type === 'disable_link' && change.linkId === linkId).length, 2, 'disable→enable→disable remains a valid ordered semantic sequence');
+  assert.equal(h.plan.changes.filter((change) => change.type === 'disable_link' && change.target.kind === 'link' && change.target.id === linkId).length, 2, 'disable→enable→disable remains a valid ordered semantic sequence');
 });
 """
 text = replace_or_verify(text, old_tail, new_tail, 'availability inverse proof')
