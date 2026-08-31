@@ -913,8 +913,24 @@ export function rejectCandidateChange(plan: ChangePlan, proposalId: string, now 
 }
 
 export function acceptAllCandidateChanges(plan: ChangePlan, now = new Date().toISOString()): ChangePlan {
-  let next = cloneChangePlan(plan);
-  for (const proposal of next.proposals.filter((item) => item.state === 'pending')) next = acceptCandidateChange(next, proposal.id, now);
+  const next = cloneChangePlan(plan);
+  const pending = next.proposals.filter((item) => item.state === 'pending');
+  if (!pending.length) return next;
+  const sourcePlanHash = changePlanHash(next);
+  const existingChangeIds = new Set(next.changes.map((change) => change.id));
+  const batchChangeIds = new Set<string>();
+  for (const proposal of pending) {
+    if (proposal.sourcePlanHash !== sourcePlanHash) throw new Error('Optimizer proposal is stale because the Change Plan changed. Re-run candidate generation.');
+    if (existingChangeIds.has(proposal.change.id) || batchChangeIds.has(proposal.change.id)) throw new Error(`Accepted proposal change ${proposal.change.id} already exists in the plan.`);
+    batchChangeIds.add(proposal.change.id);
+  }
+  for (const proposal of pending) {
+    proposal.state = 'accepted'; proposal.decidedAt = now;
+    next.changes.push(JSON.parse(JSON.stringify(proposal.change)) as PlanChange);
+    next.history.push(historyEvent(next, 'human', 'accepted_proposal', `Accepted ${describePlanChange(proposal.change)}`, now, proposal.id));
+    next.history.push(historyEvent(next, 'system', 'verification_invalidated', 'Verification invalidated because an optimizer proposal was accepted.', now, proposal.id));
+  }
+  next.status = 'draft'; next.updatedAt = now;
   return next;
 }
 
