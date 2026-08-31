@@ -7,6 +7,14 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
         raise SystemExit(f'{label}: expected exactly one anchor, found {count}')
     return text.replace(old, new, 1)
 
+
+def replace_or_verify(text: str, old: str, new: str, label: str) -> str:
+    if old in text:
+        return replace_once(text, old, new, label)
+    if new in text:
+        return text
+    raise SystemExit(f'{label}: neither original nor corrected anchor found')
+
 # F-011: enforce the declared top-level WebMCP schema at the direct execute boundary.
 webmcp = Path('packages/webmcp/src/m35d.ts')
 text = webmcp.read_text()
@@ -16,8 +24,7 @@ if 'function assertDirectToolInput(' not in text:
     text = replace_once(text, anchor, helper, 'webmcp helper')
 old_add = "  const add=(tool:Omit<WebMCPTool,'execute'>&{execute:(input:Record<string,unknown>,options?:ToolExecuteOptions)=>unknown|Promise<unknown>})=>tools.set(tool.name,tool);"
 new_add = "  const add=(tool:Omit<WebMCPTool,'execute'>&{execute:(input:Record<string,unknown>,options?:ToolExecuteOptions)=>unknown|Promise<unknown>})=>{const execute=tool.execute;tools.set(tool.name,{...tool,execute:(input,exec)=>{assertDirectToolInput(tool.name,input,tool.inputSchema);return execute(input,exec);}});};"
-if old_add in text:
-    text = replace_once(text, old_add, new_add, 'webmcp add wrapper')
+text = replace_or_verify(text, old_add, new_add, 'webmcp add wrapper')
 text = text.replace("service.inspectViolation(typeof i.violationId==='string'?i.violationId:undefined)", "service.inspectViolation(asOptionalString(i.violationId,'violationId'))")
 text = text.replace("service.focusViolation(typeof i.violationId==='string'?i.violationId:undefined)", "service.focusViolation(asOptionalString(i.violationId,'violationId'))")
 webmcp.write_text(text)
@@ -43,7 +50,7 @@ new = """export function addPlanChange(plan: ChangePlan, change: PlanChange, now
   }
   next.changes.push(JSON.parse(JSON.stringify(change)) as PlanChange);
 """
-text = replace_once(text, old, new, 'model availability guard')
+text = replace_or_verify(text, old, new, 'model availability guard')
 model.write_text(text)
 
 # Correct the WebMCP red-test harness: the boundary rejects synchronously before tool execution.
@@ -87,13 +94,13 @@ blocks = [
   );"""),
 ]
 for index, (old_block, new_block) in enumerate(blocks):
-    text = replace_once(text, old_block, new_block, f'webmcp test block {index}')
+    text = replace_or_verify(text, old_block, new_block, f'webmcp test block {index}')
 test_path.write_text(text)
 
 # Correct the scale/repeated-action harness and prove inverse availability transitions remain valid.
 test_path = Path('tests/final-adversarial-scale-actions.test.ts')
 text = test_path.read_text()
-text = replace_once(text,
+text = replace_or_verify(text,
     "import { createChangePlan, type ChangePlan, type NetworkProject, type ScenarioPatch } from '../packages/model/src/index.ts';",
     "import { changePlanHash, createChangePlan, type ChangePlan, type NetworkProject, type ScenarioPatch } from '../packages/model/src/index.ts';",
     'scale test import')
@@ -112,5 +119,5 @@ new_tail = """  assert.equal(h.plan.changes.filter((change) => change.type === '
   assert.equal(h.plan.changes.filter((change) => change.type === 'disable_link' && change.linkId === linkId).length, 2, 'disable→enable→disable remains a valid ordered semantic sequence');
 });
 """
-text = replace_once(text, old_tail, new_tail, 'availability inverse proof')
+text = replace_or_verify(text, old_tail, new_tail, 'availability inverse proof')
 test_path.write_text(text)
