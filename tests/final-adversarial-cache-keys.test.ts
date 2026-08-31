@@ -80,6 +80,6 @@ test('AV-06: delimiter-heavy identifiers cannot alias structural topology cache 
   const rightPaths = generateCandidatePaths(right, { maxCandidatePaths: 3 });
   assert.ok((leftPaths.generationDiagnostics?.cacheMisses ?? 0) > 0);
   assert.ok((rightPaths.generationDiagnostics?.cacheMisses ?? 0) > 0, 'second structurally distinct project must not hit the first project cache');
-  assert.deepEqual(leftPaths.pathsByScenarioDemand.base['D,1'][0].nodes, ['A|B', 'C#D']);
-  assert.deepEqual(rightPaths.pathsByScenarioDemand.base['D,1'][0].nodes, ['A', 'B|C#D']);
+  assert.deepEqual(leftPaths.pathsByScenarioDemand['baseline:D,1'][0].nodes, ['A|B', 'C#D']);
+  assert.deepEqual(rightPaths.pathsByScenarioDemand['baseline:D,1'][0].nodes, ['A', 'B|C#D']);
 });
