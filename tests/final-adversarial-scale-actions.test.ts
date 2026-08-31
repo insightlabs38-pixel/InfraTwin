@@ -11,7 +11,7 @@ import {
   type CollaborativeWorkspaceAdapters,
   type WorkspaceSelection,
 } from '../packages/application/src/index.ts';
-import { createChangePlan, type ChangePlan, type NetworkProject, type ScenarioPatch } from '../packages/model/src/index.ts';
+import { changePlanHash, createChangePlan, type ChangePlan, type NetworkProject, type ScenarioPatch } from '../packages/model/src/index.ts';
 import { getScenarioDefinition } from '../packages/scenarios/src/index.ts';
 
 function routingBoundaryProject(demands: number): NetworkProject {
@@ -97,16 +97,16 @@ test('AV-38/AV-39: repeated locks and routing restrictions are idempotent and re
   const h = sharedHarness();
   const linkId = h.project.links[0].id;
   const once = h.service.setPlanRestriction('link', linkId, true, 'human');
-  const afterOnceHash = once.revisionHash;
+  const afterOnceHash = changePlanHash(once);
   const twice = h.service.setPlanRestriction('link', linkId, true, 'human');
   assert.equal(twice.restrictions.lockedLinkIds.filter((id) => id === linkId).length, 1);
-  assert.equal(twice.revisionHash, afterOnceHash, 're-applying the same lock must not create a new semantic revision');
+  assert.equal(changePlanHash(twice), afterOnceHash, 're-applying the same lock must not create a new semantic revision');
 
   const routedOnce = h.service.setRoutingRestriction('link', linkId, true, 'human');
-  const routedHash = routedOnce.revisionHash;
+  const routedHash = changePlanHash(routedOnce);
   const routedTwice = h.service.setRoutingRestriction('link', linkId, true, 'human');
-  assert.equal(routedTwice.constraints.forbiddenRoutingLinkIds.filter((id) => id === linkId).length, 1);
-  assert.equal(routedTwice.revisionHash, routedHash, 're-applying the same routing restriction must be semantically idempotent');
+  assert.equal(routedTwice.restrictions.forbiddenRoutingLinkIds.filter((id) => id === linkId).length, 1);
+  assert.equal(changePlanHash(routedTwice), routedHash, 're-applying the same routing restriction must be semantically idempotent');
 
   assert.throws(() => h.service.setPlanRestriction('link', linkId, false, 'agent'), /cannot remove a human restriction/i);
   assert.throws(() => h.service.setRoutingRestriction('link', linkId, false, 'agent'), /cannot remove a human routing restriction/i);
@@ -121,5 +121,8 @@ test('AV-38: repeated equivalent semantic plan changes do not duplicate identica
     /duplicate|already|conflict|existing/i,
     'an identical outage entered twice must be rejected rather than silently duplicated',
   );
-  assert.equal(h.plan.changes.filter((change) => change.type === 'disable_link' && change.linkId === linkId).length, 1);
+  assert.equal(h.plan.changes.filter((change) => change.type === 'disable_link' && change.target.kind === 'link' && change.target.id === linkId).length, 1);
+  h.service.addPlanChange({ type: 'enable_link', linkId }, 'human');
+  h.service.addPlanChange({ type: 'disable_link', linkId }, 'human');
+  assert.equal(h.plan.changes.filter((change) => change.type === 'disable_link' && change.target.kind === 'link' && change.target.id === linkId).length, 2, 'disable→enable→disable remains a valid ordered semantic sequence');
 });

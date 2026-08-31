@@ -63,12 +63,12 @@ test('AV-20: optional violation identifiers reject wrong primitive types instead
   assert.ok(h.tools.has('inspect_violation'));
   assert.ok(h.tools.has('focus_violation'));
 
-  assert.throws(
-    () => h.tools.get('inspect_violation')!.execute({ violationId: 123 as any }),
+  await assert.rejects(
+    Promise.resolve(h.tools.get('inspect_violation')!.execute({ violationId: 123 as any })),
     /violationId.*string|string.*violationId/i,
   );
-  assert.throws(
-    () => h.tools.get('focus_violation')!.execute({ violationId: { id: 'capacity:L3' } as any }),
+  await assert.rejects(
+    Promise.resolve(h.tools.get('focus_violation')!.execute({ violationId: { id: 'capacity:L3' } as any })),
     /violationId.*string|string.*violationId/i,
   );
   registration.dispose();

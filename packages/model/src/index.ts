@@ -797,6 +797,14 @@ export function renameChangePlan(plan: ChangePlan, name: string, now = new Date(
 export function addPlanChange(plan: ChangePlan, change: PlanChange, now = change.createdAt): ChangePlan {
   const next = cloneChangePlan(plan);
   if (next.changes.some((item) => item.id === change.id)) throw new Error(`Duplicate plan change id ${change.id}`);
+  if (change.type === 'disable_link' || change.type === 'enable_link') {
+    const previous = [...next.changes].reverse().find((item) => (item.type === 'disable_link' || item.type === 'enable_link') && item.target.kind === 'link' && item.target.id === change.target.id);
+    if (previous?.type === change.type) throw new Error(`Link ${change.target.id} is already ${change.type === 'disable_link' ? 'disabled' : 'enabled'} by the current ordered Change Plan.`);
+  }
+  if (change.type === 'disable_node' || change.type === 'enable_node') {
+    const previous = [...next.changes].reverse().find((item) => (item.type === 'disable_node' || item.type === 'enable_node') && item.target.kind === 'node' && item.target.id === change.target.id);
+    if (previous?.type === change.type) throw new Error(`Node ${change.target.id} is already ${change.type === 'disable_node' ? 'disabled' : 'enabled'} by the current ordered Change Plan.`);
+  }
   next.changes.push(JSON.parse(JSON.stringify(change)) as PlanChange);
   next.history.push(historyEvent(next, change.actor, 'added_change', describePlanChange(change), now, change.id));
   return invalidatePlan(next, now, 'Verification invalidated because the Change Plan changed.');
