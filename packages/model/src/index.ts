@@ -452,7 +452,12 @@ function stripPresentationMetadata(value: unknown): unknown {
 
 export function semanticProjectValue(project: NetworkProject): NetworkProject {
   const semantic = cloneProject(project);
-  semantic.nodes = semantic.nodes.map(({ x: _x, y: _y, ...node }) => node);
+  const compareId = <T extends { id: string }>(left: T, right: T) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+  // These canonical collections are validated to have unique IDs, so insertion order is document presentation/history, not engineering semantics.
+  semantic.nodes = semantic.nodes.map(({ x: _x, y: _y, ...node }) => node).sort(compareId);
+  semantic.links = semantic.links.sort(compareId);
+  semantic.demands = semantic.demands.sort(compareId);
+  semantic.serviceClasses = semantic.serviceClasses.sort(compareId);
   if (semantic.metadata) semantic.metadata = stripPresentationMetadata(semantic.metadata) as Record<string, unknown>;
   return semantic;
 }
