@@ -38,16 +38,16 @@ test('AV-20: direct WebMCP execute rejects non-object and undeclared top-level i
   const registration = await registerCollaborativeTools(h.context, h.service);
   const initialChanges = h.plan.changes.length;
 
-  await assert.rejects(
-    Promise.resolve(h.tools.get('inspect_workspace')!.execute({ unexpected: true })),
+  assert.throws(
+    () => h.tools.get('inspect_workspace')!.execute({ unexpected: true }),
     /unexpected|unknown|not allowed|undeclared/i,
   );
-  await assert.rejects(
-    Promise.resolve(h.tools.get('add_plan_change')!.execute({ type: 'disable_link', linkId: 'L1', surprise: { nested: true } })),
+  assert.throws(
+    () => h.tools.get('add_plan_change')!.execute({ type: 'disable_link', linkId: 'L1', surprise: { nested: true } }),
     /surprise|unknown|not allowed|undeclared/i,
   );
-  await assert.rejects(
-    Promise.resolve((h.tools.get('inspect_workspace')!.execute as any)(null)),
+  assert.throws(
+    () => (h.tools.get('inspect_workspace')!.execute as any)(null),
     /object/i,
   );
   assert.equal(h.plan.changes.length, initialChanges, 'schema-bypassing extra input must not partially mutate shared state');
@@ -63,12 +63,12 @@ test('AV-20: optional violation identifiers reject wrong primitive types instead
   assert.ok(h.tools.has('inspect_violation'));
   assert.ok(h.tools.has('focus_violation'));
 
-  await assert.rejects(
-    Promise.resolve(h.tools.get('inspect_violation')!.execute({ violationId: 123 as any })),
+  assert.throws(
+    () => h.tools.get('inspect_violation')!.execute({ violationId: 123 as any }),
     /violationId.*string|string.*violationId/i,
   );
-  await assert.rejects(
-    Promise.resolve(h.tools.get('focus_violation')!.execute({ violationId: { id: 'capacity:L3' } as any })),
+  assert.throws(
+    () => h.tools.get('focus_violation')!.execute({ violationId: { id: 'capacity:L3' } as any }),
     /violationId.*string|string.*violationId/i,
   );
   registration.dispose();
