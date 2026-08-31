@@ -82,19 +82,33 @@ blocks = [
 for index, (old_block, new_block) in enumerate(blocks):
     text = replace_or_verify(text, old_block, new_block, f'webmcp synchronous test block {index}')
 
-# Revert any prior incorrect synchronous assertions for optional-ID handler validation.
+# Optional-ID validation happens inside async wrapped handlers. Promise.resolve preserves runtime rejection and satisfies TS's union return type.
 text = text.replace("""  assert.throws(
     () => h.tools.get('inspect_violation')!.execute({ violationId: 123 as any }),
     /violationId.*string|string.*violationId/i,
   );""", """  await assert.rejects(
+    Promise.resolve(h.tools.get('inspect_violation')!.execute({ violationId: 123 as any })),
+    /violationId.*string|string.*violationId/i,
+  );""")
+text = text.replace("""  await assert.rejects(
     h.tools.get('inspect_violation')!.execute({ violationId: 123 as any }),
+    /violationId.*string|string.*violationId/i,
+  );""", """  await assert.rejects(
+    Promise.resolve(h.tools.get('inspect_violation')!.execute({ violationId: 123 as any })),
     /violationId.*string|string.*violationId/i,
   );""")
 text = text.replace("""  assert.throws(
     () => h.tools.get('focus_violation')!.execute({ violationId: { id: 'capacity:L3' } as any }),
     /violationId.*string|string.*violationId/i,
   );""", """  await assert.rejects(
+    Promise.resolve(h.tools.get('focus_violation')!.execute({ violationId: { id: 'capacity:L3' } as any })),
+    /violationId.*string|string.*violationId/i,
+  );""")
+text = text.replace("""  await assert.rejects(
     h.tools.get('focus_violation')!.execute({ violationId: { id: 'capacity:L3' } as any }),
+    /violationId.*string|string.*violationId/i,
+  );""", """  await assert.rejects(
+    Promise.resolve(h.tools.get('focus_violation')!.execute({ violationId: { id: 'capacity:L3' } as any })),
     /violationId.*string|string.*violationId/i,
   );""")
 test_path.write_text(text)
