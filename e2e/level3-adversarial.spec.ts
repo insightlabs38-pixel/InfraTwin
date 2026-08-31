@@ -46,7 +46,8 @@ async function installModelContextHarness(page: Page): Promise<void> {
           const controller = new AbortController();
           let timer: ReturnType<typeof setTimeout> | undefined;
           state.calls.push({ name, status: 'started' });
-          if (cancelAfterMs !== undefined) timer = setTimeout(() => controller.abort(), Math.max(0, cancelAfterMs));
+          if (cancelAfterMs === 0) controller.abort();
+          else if (cancelAfterMs !== undefined) timer = setTimeout(() => controller.abort(), Math.max(0, cancelAfterMs));
           try {
             const result = await tool.execute(input, { signal: controller.signal });
             state.calls.push({ name, status: controller.signal.aborted ? 'cancelled' : 'success' });
@@ -242,7 +243,7 @@ test('browser WebMCP cancellation records cancellation and never publishes parti
   await importJsonThroughReview(page, path);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('WebMCP cancellation project');
   await expectActive(page, ['run_contingencies']);
-  const cancelled = await executeTool(page, 'run_contingencies', { maxScenarios: 359, workerCount: 2, timeLimitMs: 30_000 }, 1);
+  const cancelled = await executeTool(page, 'run_contingencies', { maxScenarios: 359, workerCount: 2, timeLimitMs: 30_000 }, 0);
   expect(cancelled.cancelled).toBe(true);
   expect(cancelled.ok).toBe(false);
   await expect(page.getByTestId('contingency-list')).toHaveCount(0);
