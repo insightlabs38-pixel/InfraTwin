@@ -20,7 +20,7 @@
     "benchmark:scale:engine": "node --experimental-strip-types benchmarks/scale.ts",
     "benchmark:scale:browser": "playwright test --config=playwright.scale.config.ts",
     "benchmark:scale:features": "node --experimental-strip-types benchmarks/feature-scale.ts",
-    "test:webmcp:native": "WEBMCP_NATIVE=1 playwright test e2e/phase35d-native-webmcp.spec.ts --headed --workers=1 --output=test-results-native --reporter=list",
+    "test:webmcp:native": "WEBMCP_NATIVE=1 playwright test e2e/phase35d-native-webmcp.spec.ts e2e/final-adversarial-native-webmcp.spec.ts --headed --workers=1 --output=test-results-native --reporter=list",
     "benchmark:level4-design": "node --experimental-strip-types benchmarks/level4-design.ts",
     "benchmark:level4-scale": "node --experimental-strip-types benchmarks/level4-scale.ts"
   },
