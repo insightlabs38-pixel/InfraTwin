@@ -1,0 +1,34 @@
+name: Final Adversarial Pareto Fix
+
+on:
+  push:
+    branches: [final/adversarial-validation]
+    paths:
+      - scripts/final-adversarial-pareto-fix.py
+      - .github/workflows/final-adversarial-pareto-fix.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: final/adversarial-validation
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: python3 scripts/final-adversarial-pareto-fix.py
+      - run: npm ci
+      - run: node --experimental-strip-types --test tests/final-adversarial-pareto.test.ts tests/level4b-path-engine.test.ts
+      - run: npm run typecheck
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/optimizer/src/level4-design.ts
+          git diff --cached --quiet || git commit -m "fix(final): deduplicate equivalent Pareto objectives"
+          git push origin HEAD:final/adversarial-validation
