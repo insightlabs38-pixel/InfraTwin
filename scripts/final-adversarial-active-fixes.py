@@ -53,6 +53,15 @@ new = """export function addPlanChange(plan: ChangePlan, change: PlanChange, now
 text = replace_or_verify(text, old, new, 'model availability guard')
 model.write_text(text)
 
+# F-012 / AV-24: only explicit time-limit status may authorize a feasible incumbent.
+# Generic solver Error/Unknown states fail closed even if a malformed/partial result contains numeric columns.
+optimizer = Path('packages/optimizer/src/index.ts')
+text = optimizer.read_text()
+old = "  return { status, proof: hasIncumbent ? 'feasible-incumbent' : 'unknown', timedOut: false };"
+new = "  return { status, proof: 'unknown', timedOut: false };"
+text = replace_or_verify(text, old, new, 'solver status fail-closed')
+optimizer.write_text(text)
+
 # Direct top-level schema failures are synchronous; handler-level semantic validation is a rejected Promise.
 test_path = Path('tests/final-adversarial-webmcp-inputs.test.ts')
 text = test_path.read_text()
