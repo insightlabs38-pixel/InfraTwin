@@ -1,8 +1,7 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { generateScaleProject, SCALE_TIERS } from '../../packages/scenarios/src/scale-generator.ts';
 import {
   createClipCapture,
-  enableAdaptiveRouting,
   executeNative,
   lockAndAdaptiveReplan,
   moveAndClick,
@@ -17,11 +16,12 @@ import {
 } from './demo-helpers.ts';
 
 const paymentDemandIds = Array.from({ length: 10 }, (_, index) => `PAY-NECE-${String(index + 1).padStart(2, '0')}`);
+type DemoBody = (args: { page: Page }, testInfo: TestInfo) => Promise<void>;
 
-function clipTest(clip: number, title: string, fn: Parameters<typeof test>[1]) {
-  test(title, async (args, testInfo) => {
+function clipTest(clip: number, title: string, fn: DemoBody) {
+  test(title, async ({ page }, testInfo) => {
     test.skip(!shouldCapture(clip), `Clip ${clip} excluded by CAPTURE_SET=${process.env.CAPTURE_SET ?? 'all'}.`);
-    await fn(args, testInfo);
+    await fn({ page }, testInfo);
   });
 }
 
@@ -74,7 +74,7 @@ clipTest(2, '02 — human and agent share one plan through native WebMCP', async
   await expect(page.getByTestId('plan-change-list')).toContainText(/Payments|10 demands/i);
   await expect(page.getByTestId('plan-change-list')).toContainText('Agent-authored');
   await expect(page.getByTestId('collaboration-indicator')).toContainText(/Agent/i);
-  await pauseForViewer(5_000);
+  await pauseForViewer(6_800);
   await capture.finish();
 });
 
@@ -102,7 +102,7 @@ clipTest(3, '03 — deterministic failure and remote evidence', async ({ page },
   expect(violation.linkId).toBe('BB-SE-CE-01');
   await executeNative(page, 'focus_violation', { violationId: violation.id });
   await expect(page.getByTestId('link-inspector-BB-SE-CE-01')).toBeVisible();
-  await pauseForViewer(4_800);
+  await pauseForViewer(5_600);
   await capture.finish({ focusedViolationLinkId: violation.linkId });
 });
 
@@ -163,7 +163,7 @@ clipTest(5, '05 — compare adaptive variants and verify', async ({ page }, test
   await pauseForViewer(1_800);
   const compared = await executeNative<Record<string, any>>(page, 'compare_mitigation_variants');
   expect(compared).toBeTruthy();
-  const rows = page.locator('[data-testid^="design-variant-design:"]');
+  const rows = page.locator('[data-testid^="design-variant-"]').filter({ hasNot: page.getByTestId('design-variant-table') });
   await expect.poll(() => rows.count(), { timeout: 60_000 }).toBeGreaterThan(0);
   await expect(page.getByTestId('design-variant-table')).toContainText(/verified/i);
   await pauseForViewer(4_200);
