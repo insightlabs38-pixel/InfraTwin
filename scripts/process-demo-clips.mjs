@@ -44,7 +44,7 @@ for (const metadataFile of metadataFiles) {
 if (generated.length) {
   const concatFile = join(outDir, 'preview-concat.txt');
   writeFileSync(concatFile, generated.map((path) => `file '${basename(path).replaceAll("'", "'\\''")}'`).join('\n') + '\n', 'utf8');
-  run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', 'preview-concat.txt', '-c', 'copy', '-movflags', '+faststart', 'demo-preview.mp4']);
+  run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', concatFile, '-c', 'copy', '-movflags', '+faststart', 'demo-preview.mp4']);
   rmSync(concatFile);
 }
 
