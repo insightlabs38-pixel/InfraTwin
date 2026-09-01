@@ -66,7 +66,7 @@ export async function selectLink(page: Page, linkId: string): Promise<void> {
 export async function openProductionWorkspace(page: Page): Promise<void> {
   await page.goto('/');
   await expect(page.getByTestId('topology-canvas')).toBeVisible();
-  await expect(page.getByText('Continental Service Network', { exact: false }).first()).toBeVisible();
+  await expect(page.getByTestId('network-selector')).toHaveValue('continental-service-network');
   await waitForStableUI(page);
 }
 
