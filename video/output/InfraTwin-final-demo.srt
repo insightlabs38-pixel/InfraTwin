@@ -1,0 +1,117 @@
+1
+00:00:03,000 --> 00:00:06,000
+Network changes rarely fail in isolation.
+
+2
+00:00:06,000 --> 00:00:10,000
+A maintenance outage, new traffic, or a capacity constraint
+can create failures somewhere completely unexpected.
+
+3
+00:00:10,000 --> 00:00:15,733
+InfraTwin lets an engineer model those changes
+before they reach production.
+
+4
+00:00:15,733 --> 00:00:20,700
+The key is WebMCP. Instead of sending an agent
+a stale API copy,
+
+5
+00:00:20,700 --> 00:00:25,733
+InfraTwin lets the engineer and agent operate on the same live,
+unsaved Network and ChangePlan in the browser.
+
+6
+00:00:25,733 --> 00:00:33,000
+The engineer takes a Northeast-to-Central backbone link offline.
+The agent reads that exact selection through WebMCP
+
+7
+00:00:33,000 --> 00:00:42,367
+and adds the expected twenty-percent Payments growth
+to the same plan.
+
+8
+00:00:42,367 --> 00:00:47,200
+InfraTwin then runs deterministic routing
+and capacity analysis.
+
+9
+00:00:47,200 --> 00:00:53,233
+The combined change overloads a different Southeast-to-Central corridor,
+with the failure and utilization evidence linked back to the workspace.
+
+10
+00:00:53,233 --> 00:00:59,233
+The agent does not invent that conclusion.
+The evidence comes from machine-checkable computation.
+
+11
+00:00:59,233 --> 00:01:06,233
+That matters because real engineering includes constraints
+an optimizer only learns when the human supplies them.
+
+12
+00:01:06,233 --> 00:01:12,800
+The first mitigation is the cheapest capacity upgrade.
+But the engineer knows that corridor cannot be modified,
+
+13
+00:01:12,800 --> 00:01:20,200
+so they lock it in the workspace.
+The old proposal becomes stale immediately.
+
+14
+00:01:20,200 --> 00:01:28,000
+The agent observes the new restriction and asks InfraTwin
+for another bounded design,
+
+15
+00:01:28,000 --> 00:01:35,000
+allowing routing and capacity changes around the protected resource.
+After profiling the design engine,
+
+16
+00:01:35,000 --> 00:01:42,000
+candidate-path generation on the flagship workload fell
+from 4.73 seconds to 0.51—roughly 9.35 times faster,
+
+17
+00:01:42,000 --> 00:01:45,233
+without changing the mathematical result.
+
+18
+00:01:45,233 --> 00:01:51,000
+InfraTwin compares bounded alternatives by cost,
+peak utilization, and verification status.
+
+19
+00:01:51,000 --> 00:01:59,300
+The engineer remains in control of the choice,
+and the selected design is reconstructed and independently verified before approval.
+
+20
+00:01:59,300 --> 00:02:05,000
+This is not limited to a tiny demo topology.
+The browser workspace has also been validated
+
+21
+00:02:05,000 --> 00:02:10,800
+on a five-hundred-node, twelve-hundred-link,
+four-hundred-demand network.
+
+22
+00:02:10,800 --> 00:02:17,500
+The integration uses native document.modelContext capability registration
+and execution in the browser, not a parallel backend state.
+
+23
+00:02:17,500 --> 00:02:25,000
+Humans provide intent, operational knowledge, and approval.
+Agents explore and revise alternatives.
+
+24
+00:02:25,000 --> 00:02:35,200
+InfraTwin supplies the deterministic evidence connecting the two,
+so teams can falsify bad changes before production instead of discovering them afterward.
