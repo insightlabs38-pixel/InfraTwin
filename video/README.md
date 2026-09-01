@@ -20,6 +20,7 @@ Install the tooling dependency and render:
 python -m pip install -r video/requirements.txt
 python video/render.py
 video/scripts/validate-video.sh video/output/InfraTwin-final-demo.mp4
+video/scripts/export-review-frames.sh video/output/InfraTwin-final-demo.mp4
 ```
 
 The renderer creates the title/problem cards, both reusable diagrams, restrained product callouts, source-footage crops, the final no-audio picture master, and a narration-ready MP4 with a silent AAC timing track.
