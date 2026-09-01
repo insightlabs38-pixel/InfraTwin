@@ -132,14 +132,13 @@ export function createClipCapture(page: Page, testInfo: TestInfo, metadata: Clip
       await page.close();
       await video.saveAs(rawPath);
       const timing = {
-        filename: metadata.filename,
+        ...metadata,
         rawFilename: `${base}.webm`,
         trimStartSec: Math.max(0, (usefulStartedAt - recordingStartedAt) / 1000),
         durationSec: Math.max(0.1, (usefulEndedAt - usefulStartedAt) / 1000),
         sourceCommit: process.env.GITHUB_SHA ?? 'local',
         generatedAutomatically: true,
         fakeOrSimulatedProductState: 'NONE',
-        ...metadata,
         ...extra,
       };
       writeFileSync(join(RAW_DIR, `${base}.json`), `${JSON.stringify(timing, null, 2)}\n`, 'utf8');

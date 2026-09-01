@@ -163,7 +163,7 @@ clipTest(5, '05 — compare adaptive variants and verify', async ({ page }, test
   await pauseForViewer(1_800);
   const compared = await executeNative<Record<string, any>>(page, 'compare_mitigation_variants');
   expect(compared).toBeTruthy();
-  const rows = page.locator('[data-testid^="design-variant-"]').filter({ hasNot: page.getByTestId('design-variant-table') });
+  const rows = page.locator('button[data-testid^="design-variant-"]');
   await expect.poll(() => rows.count(), { timeout: 60_000 }).toBeGreaterThan(0);
   await expect(page.getByTestId('design-variant-table')).toContainText(/verified/i);
   await pauseForViewer(4_200);
