@@ -1,0 +1,109 @@
+name: Generate InfraTwin demo clips
+
+on:
+  workflow_dispatch:
+    inputs:
+      capture_set:
+        description: Clips to generate
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - core
+          - webmcp
+          - scale
+      keep_raw_webm:
+        description: Keep original Playwright WebM recordings
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: demo-clips-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    name: Capture 1080p demo clips
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CI: '1'
+      CAPTURE_SET: ${{ inputs.capture_set }}
+      KEEP_RAW_WEBM: ${{ inputs.keep_raw_webm }}
+
+    steps:
+      - name: Checkout requested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Install or verify ffmpeg
+        shell: bash
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+
+      - name: Frozen quality gate
+        run: |
+          npm test
+          npm run typecheck
+          npm run build
+
+      - name: Capture dedicated demo footage
+        run: xvfb-run -a npx playwright test --config=playwright.demo.config.ts
+
+      - name: Convert recordings to final MP4 clips
+        run: node scripts/process-demo-clips.mjs
+
+      - name: Validate final clips
+        run: node scripts/validate-demo-clips.mjs
+
+      - name: Generate capture manifest
+        run: node scripts/generate-demo-manifest.mjs
+
+      - name: Upload InfraTwin demo clips
+        uses: actions/upload-artifact@v4
+        with:
+          name: infratwin-demo-clips
+          retention-days: 10
+          if-no-files-found: error
+          path: |
+            demo-clips/
+            raw/
+            contact-sheets/
+            capture-manifest.json
+            capture-manifest.md
+            demo-preview.mp4
+            planning/DEMO_CLIP_REVIEW.md
+
+      - name: Upload capture diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: infratwin-demo-capture-debug
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            demo-test-results/
+            raw/
