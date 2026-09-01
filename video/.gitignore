@@ -1,0 +1,6 @@
+public/footage/
+generated/
+segments/
+output/*.mp4
+output/review-frames/
+output/*.json
