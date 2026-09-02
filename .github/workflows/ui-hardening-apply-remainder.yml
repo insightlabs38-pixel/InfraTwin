@@ -1,0 +1,43 @@
+name: Apply UI hardening remainder
+
+on:
+  push:
+    branches:
+      - tmp/ui-hardening-apply-remainder
+    paths:
+      - .github/workflows/ui-hardening-apply-remainder.yml
+      - .ui-hardening/remainder.patch.gz.b64
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ui-winning-level-hardening
+          fetch-depth: 0
+      - name: Apply validated remainder patch
+        run: |
+          git fetch origin tmp/ui-hardening-apply-remainder:refs/remotes/origin/tmp/ui-hardening-apply-remainder
+          git show origin/tmp/ui-hardening-apply-remainder:.ui-hardening/remainder.patch.gz.b64 | base64 -d | gzip -d > /tmp/ui-hardening-remainder.patch
+          git apply --check /tmp/ui-hardening-remainder.patch
+          git apply /tmp/ui-hardening-remainder.patch
+          git diff --check
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Clean install and targeted validation
+        run: |
+          npm ci
+          npm run typecheck
+          node --experimental-strip-types --test tests/ui-hardening.test.ts
+      - name: Commit hardened source
+        run: |
+          git config user.name "InfraTwin UI hardening"
+          git config user.email "ui-hardening@users.noreply.github.com"
+          git add apps/web/app/hardening.css apps/web/components/topology-canvas.tsx apps/web/components/workbench-m35d-main-view.tsx apps/web/components/workbench-m35d-network-view.tsx e2e/ui-visual-matrix.spec.ts e2e/level4a-adaptive-design.spec.ts e2e/phase35d-webmcp-coactivity.spec.ts e2e/level3-adversarial.spec.ts e2e/level3-hardening.spec.ts e2e/phase35a-change-plan.spec.ts e2e/phase35c-performance-scale.spec.ts
+          git commit -m "fix: finish responsive UI hardening"
+          git push origin HEAD:ui-winning-level-hardening
