@@ -265,7 +265,7 @@ sceneTest(10, 'the previous proposal becomes stale immediately', async ({ page }
   await pauseForViewer(1_700);
   await page.getByTestId(`lock-link-${proposalLinkId}`).check();
   await expect(page.getByTestId('candidate-proposals')).toContainText(/Stale · needs replanning/i);
-  await expect(page.getByTestId('workflow-guidance')).toContainText(/stale/i);
+  await expect(page.getByTestId('workflow-guidance')).toContainText(/analyze again/i);
   await pauseForViewer(5_000);
   await capture.finish({ staleProposalTarget: proposalLinkId });
 });
