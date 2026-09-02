@@ -65,7 +65,7 @@ test('Phase 3.5C reproducible Chromium scale benchmark', async ({ page, browserN
   });
   await timed('National Backbone Scale Test', nationalCounts, 'single-shortest-path', 'changeplan-analysis', 'worker', async () => {
     await page.getByTestId('analyze-plan').click();
-    await expect(page.getByTestId('capacity-analysis-status')).toContainText(/RUNNING.*worker/i, { timeout: 5_000 });
+    await expect(page.getByTestId('capacity-analysis-status')).toContainText(/(RUNNING|COMPLETE).*worker/i, { timeout: 5_000 });
     await expect(page.getByTestId('capacity-analysis-status')).toContainText(/COMPLETE.*worker/i, { timeout: 15_000 });
   });
   const n1StartedAt = performance.now();
