@@ -179,7 +179,7 @@ export async function lockAndAdaptiveReplan(page: Page, proposalLinkId: string):
   await page.getByTestId('nav-network').click();
   await selectLink(page, proposalLinkId);
   await page.getByTestId(`lock-link-${proposalLinkId}`).check();
-  await expect(page.getByTestId('candidate-proposals')).toContainText(/stale after plan revision/i);
+  await expect(page.getByTestId('candidate-proposals')).toContainText(/Stale · needs replanning/i);
   const locked = await executeNative<Record<string, any>>(page, 'inspect_plan');
   if (!locked.restrictions.lockedLinkIds.includes(proposalLinkId)) throw new Error(`Human lock on ${proposalLinkId} was not observed through WebMCP.`);
   await executeNative(page, 'analyze_plan');

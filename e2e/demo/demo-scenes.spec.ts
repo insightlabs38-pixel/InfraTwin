@@ -11,6 +11,7 @@ import {
   pauseForViewer,
   seedFlagshipFailure,
   seedFlagshipProposal,
+  selectLink,
   waitForNativeTools,
 } from './demo-helpers.ts';
 
@@ -95,7 +96,7 @@ sceneTest(3, 'human schedules the maintenance outage', async ({ page }, testInfo
   await pauseForViewer(1_200);
   await moveAndClick(page, page.getByTestId('plan-link-outage-BB-NE-CE-01'));
   await expect(page.getByTestId('plan-change-list')).toContainText('Human');
-  await expect(page.getByTestId('plan-change-list')).toContainText(/outage|unavailable/i);
+  await expect(page.getByTestId('plan-change-list')).toContainText(/offline/i);
   await pauseForViewer(4_500);
   await capture.finish();
 });
@@ -236,7 +237,7 @@ sceneTest(9, 'human locks the proposed modification target', async ({ page }, te
     maxDurationSec: 12,
   });
   const { proposalLinkId } = await seedFlagshipProposal(page, true);
-  await clickTopologyLink(page, proposalLinkId);
+  await selectLink(page, proposalLinkId);
   capture.markStart();
   await pauseForViewer(1_200);
   await page.getByTestId(`lock-link-${proposalLinkId}`).check();
@@ -258,7 +259,7 @@ sceneTest(10, 'the previous proposal becomes stale immediately', async ({ page }
     maxDurationSec: 13,
   });
   const { proposalLinkId } = await seedFlagshipProposal(page, true);
-  await clickTopologyLink(page, proposalLinkId);
+  await selectLink(page, proposalLinkId);
   await expect(page.getByTestId('candidate-proposals')).toContainText(/Proposed · awaiting human review/i);
   capture.markStart();
   await pauseForViewer(1_700);
@@ -282,7 +283,7 @@ sceneTest(11, 'agent re-inspects the lock and adaptively replans', async ({ page
     maxDurationSec: 24,
   });
   const { proposalLinkId } = await seedFlagshipProposal(page, true);
-  await clickTopologyLink(page, proposalLinkId);
+  await selectLink(page, proposalLinkId);
   await page.getByTestId(`lock-link-${proposalLinkId}`).check();
   await expect(page.getByTestId('candidate-proposals')).toContainText(/Stale · needs replanning/i);
   capture.markStart();
@@ -382,7 +383,7 @@ sceneTest(14, '500-node browser-scale workspace', async ({ page }, testInfo) => 
   await page.getByTestId('open-imported-network').click();
   await expect(page.getByTestId('topology-workspace')).toBeVisible();
   await expect(page.getByTestId('network-scale')).toContainText('500');
-  await expect(page.getByTestId('network-scale')).toContainText('1,200');
+  await expect(page.getByTestId('network-scale')).toContainText('1200');
   await expect(page.getByTestId('network-scale')).toContainText('400');
   await expect(page.getByTestId('topology-canvas')).toHaveAttribute('data-renderer', 'canvas');
   capture.markStart();
