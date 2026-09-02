@@ -1,0 +1,29 @@
+name: UI hardening qualification
+
+on:
+  push:
+    branches:
+      - tmp/ui-hardening-visual-qualification
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Run UI hardening and visual matrix
+        run: npx playwright test e2e/ui-hardening.spec.ts e2e/ui-visual-matrix.spec.ts --reporter=html
+      - name: Upload UI qualification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-hardening-qualification
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: ignore
+          retention-days: 7
