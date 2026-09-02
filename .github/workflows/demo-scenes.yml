@@ -1,0 +1,100 @@
+name: Generate InfraTwin winning demo scenes
+
+on:
+  push:
+    branches:
+      - demo-winning-level-capture
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: demo-winning-scenes-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    name: Capture 15 modular 1080p scenes
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CI: '1'
+      KEEP_RAW_WEBM: 'false'
+      PRODUCT_BASE_SHA: '9aa939a4cec5774f2fb0d95cbd2905ac653e480e'
+
+    steps:
+      - name: Checkout capture branch
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Install or verify ffmpeg
+        shell: bash
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+
+      - name: Product quality gate
+        run: |
+          npm test
+          npm run typecheck
+          npm run build
+
+      - name: Capture 15 dedicated source scenes
+        run: xvfb-run -a npx playwright test --config=playwright.demo-scenes.config.ts
+
+      - name: Convert source recordings to MP4
+        run: node scripts/process-demo-clips.mjs
+
+      - name: Validate all scene files
+        run: node scripts/validate-demo-clips.mjs
+
+      - name: Generate 15-scene manifest
+        run: node scripts/generate-demo-scenes-manifest.mjs
+
+      - name: Assert exact scene count
+        shell: bash
+        run: |
+          test "$(find demo-clips -maxdepth 1 -type f -name '[0-9][0-9]-*.mp4' | wc -l)" -eq 15
+          test "$(find contact-sheets -maxdepth 1 -type f -name '[0-9][0-9]-*.png' | wc -l)" -eq 15
+
+      - name: Upload winning-level source scenes
+        uses: actions/upload-artifact@v4
+        with:
+          name: infratwin-winning-demo-scenes
+          retention-days: 14
+          if-no-files-found: error
+          compression-level: 0
+          path: |
+            demo-clips/
+            contact-sheets/
+            capture-manifest.json
+            capture-manifest.md
+            demo-preview.mp4
+            planning/DEMO_SCENE_CAPTURE_PLAN.md
+
+      - name: Upload capture diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: infratwin-winning-demo-scenes-debug
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            demo-scene-test-results/
+            raw/
