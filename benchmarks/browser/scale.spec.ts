@@ -78,6 +78,9 @@ test('Phase 3.5C reproducible Chromium scale benchmark', async ({ page, browserN
   await page.getByRole('button', { name: 'Canonical JSON' }).click();
   await page.getByTestId('json-import-file').setInputFiles({ name: 'chromium-worker-probe.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(workerProject)) });
   await page.getByTestId('open-imported-network').click();
+  await expect(page.getByRole('alertdialog')).toBeVisible();
+  await page.getByRole('button', { name: 'Open network' }).click();
+  await expect(page.getByRole('alertdialog')).toBeHidden();
   await expect(page.getByTestId('compute-profile')).toContainText('Worker preferred');
   const workerStart = performance.now();
   await page.getByTestId('analyze-plan').click();
