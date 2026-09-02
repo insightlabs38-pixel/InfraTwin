@@ -22,7 +22,7 @@ test('UI hardening: unanalyzed engineering values are never presented as zero ev
   await expect(inspector).toContainText('Not analyzed');
   await expect(inspector).not.toContainText(/Utilization\s*0%/i);
   await expect(page.getByTestId('run-optimizer')).toBeDisabled();
-  await expect(page.getByTestId('run-optimizer')).toHaveAttribute('title', /Analyze a failing plan first|analysis/i);
+  await expect(page.getByTestId('run-optimizer')).toHaveAttribute('title', /Analyze .*ChangePlan first/i);
   await expect(page.getByTestId('workflow-guidance')).toContainText(/planned change|analy/i);
 });
 
@@ -91,6 +91,10 @@ test('UI hardening: main workflows do not emit controlled/uncontrolled React war
     if (/controlled input to be uncontrolled|uncontrolled input to be controlled/i.test(text)) warnings.push(text);
   });
   await open(page);
+  await page.getByTestId('import-json').click();
+  await page.getByRole('button', { name: 'Canonical JSON' }).click();
+  await page.getByRole('button', { name: 'CSV bundle' }).click();
+  await page.getByRole('button', { name: 'Close import dialog' }).click();
   await page.getByTestId('network-selector').selectOption('national-backbone-scale-test');
   await page.getByTestId('analyze-plan').click();
   await expect(page.getByTestId('plan-analysis-status')).toContainText(/PASS|FAIL/, { timeout: 20_000 });
