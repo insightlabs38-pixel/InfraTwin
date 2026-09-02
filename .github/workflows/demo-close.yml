@@ -1,0 +1,95 @@
+name: Capture InfraTwin demo close
+
+on:
+  push:
+    branches:
+      - demo-winning-level-capture
+    paths:
+      - 'e2e/demo/demo-close.spec.ts'
+      - 'playwright.demo-close.config.ts'
+      - '.github/workflows/demo-close.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: demo-close-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capture-close:
+    name: Capture verified decision-state close
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: '1'
+      KEEP_RAW_WEBM: 'false'
+      PRODUCT_BASE_SHA: '9aa939a4cec5774f2fb0d95cbd2905ac653e480e'
+
+    steps:
+      - name: Checkout capture branch
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Install or verify ffmpeg
+        shell: bash
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+
+      - name: Product quality gate
+        run: |
+          npm test
+          npm run typecheck
+          npm run build
+
+      - name: Capture purpose-built close
+        run: xvfb-run -a npx playwright test --config=playwright.demo-close.config.ts
+
+      - name: Convert source recording to MP4
+        run: node scripts/process-demo-clips.mjs
+
+      - name: Validate closing scene
+        run: node scripts/validate-demo-clips.mjs
+
+      - name: Assert exact closing-scene count
+        shell: bash
+        run: |
+          test "$(find demo-clips -maxdepth 1 -type f -name '17-*.mp4' | wc -l)" -eq 1
+          test "$(find contact-sheets -maxdepth 1 -type f -name '17-*.png' | wc -l)" -eq 1
+
+      - name: Upload closing scene
+        uses: actions/upload-artifact@v4
+        with:
+          name: infratwin-demo-close
+          retention-days: 14
+          if-no-files-found: error
+          compression-level: 0
+          path: |
+            demo-clips/17-*.mp4
+            contact-sheets/17-*.png
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: infratwin-demo-close-debug
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            demo-close-test-results/
+            raw/
