@@ -1,0 +1,30 @@
+name: UI hardening final scale qualification
+
+on:
+  push:
+    branches:
+      - tmp/ui-hardening-native-lifecycle
+
+permissions:
+  contents: read
+
+jobs:
+  scale-and-level4:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ui-winning-level-hardening
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: rm -rf benchmark-results && mkdir -p benchmark-results
+      - name: Run corrected scale benchmark
+        run: npm run benchmark:scale
+      - name: Run Level 4 design benchmark
+        run: npm run benchmark:level4-design
+      - name: Run Level 4 scale benchmark
+        run: npm run benchmark:level4-scale
