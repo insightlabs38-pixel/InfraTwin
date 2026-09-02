@@ -1,0 +1,195 @@
+name: UI hardening native lifecycle apply
+
+on:
+  push:
+    branches:
+      - tmp/ui-hardening-native-lifecycle
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-qualify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ui-winning-level-hardening
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply native registration lifecycle hardening
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one replacement target, found {count}')
+              p.write_text(text.replace(old, new))
+
+          replace_once(
+              'packages/webmcp/src/m35d.ts',
+              "export interface WebMCPRegistrationOptions { onActivity?(event:ToolActivityEvent):void; onToolSetChanged?(names:string[]):void }",
+              "export interface WebMCPRegistrationOptions { onActivity?(event:ToolActivityEvent):void; onToolSetChanged?(names:string[]):void; signal?:AbortSignal }",
+          )
+
+          old_registration = '''export async function registerCollaborativeTools(context:ModelContextLike,service:CollaborativeWorkspaceService,options:WebMCPRegistrationOptions={}):Promise<WebMCPRegistration>{
+            const registrations=new Map<string,AbortController>();let disposed=false;let tools:Map<string,WebMCPTool>;
+            const desired=()=>{const state=service.capabilityState();const names=new Set<string>(CORE_TOOL_NAMES);if(state.hasViolation)for(const n of VIOLATION_TOOL_NAMES)names.add(n);if(state.canProposeMitigation)for(const n of MITIGATION_TOOL_NAMES)names.add(n);if(state.canCompareMitigationVariants)for(const n of DESIGN_TOOL_NAMES)names.add(n);if(state.canDecideProposal)for(const n of PROPOSAL_TOOL_NAMES)names.add(n);return names;};
+            const refresh=async()=>{if(disposed)return;const want=desired();for(const [name,c] of [...registrations])if(!want.has(name)){c.abort();registrations.delete(name);}for(const name of want)if(!registrations.has(name)){const tool=tools.get(name);if(!tool)continue;const c=new AbortController();await context.registerTool(tool,{signal:c.signal});if(disposed)c.abort();else registrations.set(name,c);}options.onToolSetChanged?.([...registrations.keys()].sort());};
+            tools=buildTools(service,options,refresh);
+            await refresh();
+            return {refresh:async()=>{await refresh();return [...registrations.keys()].sort();},dispose:()=>{disposed=true;for(const c of registrations.values())c.abort();registrations.clear();options.onToolSetChanged?.([]);},getRegisteredNames:()=>[...registrations.keys()].sort()};
+          }'''
+          new_registration = '''export async function registerCollaborativeTools(context:ModelContextLike,service:CollaborativeWorkspaceService,options:WebMCPRegistrationOptions={}):Promise<WebMCPRegistration>{
+            const registrations=new Map<string,AbortController>();let disposed=options.signal?.aborted??false;let tools:Map<string,WebMCPTool>;
+            const desired=()=>{const state=service.capabilityState();const names=new Set<string>(CORE_TOOL_NAMES);if(state.hasViolation)for(const n of VIOLATION_TOOL_NAMES)names.add(n);if(state.canProposeMitigation)for(const n of MITIGATION_TOOL_NAMES)names.add(n);if(state.canCompareMitigationVariants)for(const n of DESIGN_TOOL_NAMES)names.add(n);if(state.canDecideProposal)for(const n of PROPOSAL_TOOL_NAMES)names.add(n);return names;};
+            const publishNames=()=>options.onToolSetChanged?.([...registrations.keys()].sort());
+            const dispose=()=>{const notify=!disposed||registrations.size>0;disposed=true;for(const c of registrations.values())c.abort();registrations.clear();options.signal?.removeEventListener('abort',dispose);if(notify)options.onToolSetChanged?.([]);};
+            const refresh=async()=>{if(disposed)return;const want=desired();for(const [name,c] of [...registrations])if(!want.has(name)){c.abort();registrations.delete(name);}for(const name of want){if(disposed)break;if(registrations.has(name))continue;const tool=tools.get(name);if(!tool)continue;const c=new AbortController();registrations.set(name,c);try{await context.registerTool(tool,{signal:c.signal});if(disposed||options.signal?.aborted){c.abort();registrations.delete(name);break;}}catch(error){c.abort();registrations.delete(name);throw error;}}publishNames();};
+            tools=buildTools(service,options,refresh);
+            options.signal?.addEventListener('abort',dispose,{once:true});
+            try{await refresh();}catch(error){dispose();throw error;}
+            return {refresh:async()=>{await refresh();return [...registrations.keys()].sort();},dispose,getRegisteredNames:()=>[...registrations.keys()].sort()};
+          }'''
+          replace_once('packages/webmcp/src/m35d.ts', old_registration, new_registration)
+
+          replace_once(
+              'apps/web/components/workbench-m35d-stage3.tsx',
+              "    let active = true;\n    delete (window as Window & { __infratwinWebMCPRegistrationError?: string }).__infratwinWebMCPRegistrationError;",
+              "    let active = true;\n    const registrationController = new AbortController();\n    delete (window as Window & { __infratwinWebMCPRegistrationError?: string }).__infratwinWebMCPRegistrationError;",
+          )
+          replace_once(
+              'apps/web/components/workbench-m35d-stage3.tsx',
+              "      // React Strict Mode mounts, cleans up, and remounts effects in development. Yield once so\n      // the abandoned first effect cannot overlap native registerTool calls with the live mount.",
+              "      // Avoid native registration work for an immediately abandoned Strict Mode mount. The\n      // registration-level AbortSignal also revokes any partial/in-flight tool registration.",
+          )
+          replace_once(
+              'apps/web/components/workbench-m35d-stage3.tsx',
+              "          onActivity: (event: ToolActivityEvent) => setActivity((current: ToolActivityEvent[]) => [event, ...current].slice(0, 40)),\n          onToolSetChanged: (names: string[]) => setRegisteredTools(names),",
+              "          onActivity: (event: ToolActivityEvent) => setActivity((current: ToolActivityEvent[]) => [event, ...current].slice(0, 40)),\n          onToolSetChanged: (names: string[]) => setRegisteredTools(names),\n          signal: registrationController.signal,",
+          )
+          replace_once(
+              'apps/web/components/workbench-m35d-stage3.tsx',
+              "    return () => { active = false; webmcpRegistrationRef.current?.dispose(); webmcpRegistrationRef.current = null; };",
+              "    return () => { active = false; registrationController.abort(); webmcpRegistrationRef.current?.dispose(); webmcpRegistrationRef.current = null; };",
+          )
+
+          replace_once(
+              'e2e/phase35d-native-webmcp.spec.ts',
+              "  await expect(page.getByTestId('plan-change-list')).toContainText('Agent-authored');",
+              "  await expect(page.getByTestId('plan-change-list')).toContainText('Agent');",
+          )
+          replace_once(
+              'e2e/phase35d-native-webmcp.spec.ts',
+              "  await expect(page.getByTestId('network-design-summary')).toContainText(/cost 8/i);",
+              "  await expect(page.getByTestId('network-design-summary').locator('.proposal-metrics')).toContainText(/Cost\\s*8/i);",
+          )
+
+          marker = "test('M3.5D K: verification is immediately stale after human semantic edit', async () => {"
+          regression_tests = '''test('M3.5D registration refresh is race-safe when engineering state exposes new native tools', async () => {
+            const h = makeHarness();
+            const tools = new Map<string, WebMCPTool>();
+            const context: ModelContextLike = {
+              async registerTool(tool, options) {
+                if (tools.has(tool.name)) {
+                  const error = new Error('Duplicate tool name');
+                  error.name = 'InvalidStateError';
+                  throw error;
+                }
+                tools.set(tool.name, tool);
+                options?.signal?.addEventListener('abort', () => tools.delete(tool.name), { once: true });
+                await Promise.resolve();
+              },
+            };
+            const registration = await registerCollaborativeTools(context, h.service);
+            await addFailingHumanOutage(h);
+            await Promise.all([registration.refresh(), registration.refresh(), registration.refresh()]);
+            for (const name of [...VIOLATION_TOOL_NAMES, ...MITIGATION_TOOL_NAMES]) assert.ok(tools.has(name), `${name} should be registered exactly once`);
+            registration.dispose();
+            assert.equal(tools.size, 0);
+          });
+
+          test('M3.5D registration abort revokes partial initial registration before a replacement mount starts', async () => {
+            const h = makeHarness();
+            const tools = new Map<string, WebMCPTool>();
+            let releaseFirst!: () => void;
+            let signalStarted!: () => void;
+            const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+            const firstStarted = new Promise<void>((resolve) => { signalStarted = resolve; });
+            let gateOpen = true;
+            const context: ModelContextLike = {
+              async registerTool(tool, options) {
+                if (tools.has(tool.name)) {
+                  const error = new Error('Duplicate tool name');
+                  error.name = 'InvalidStateError';
+                  throw error;
+                }
+                tools.set(tool.name, tool);
+                options?.signal?.addEventListener('abort', () => tools.delete(tool.name), { once: true });
+                if (gateOpen) {
+                  gateOpen = false;
+                  signalStarted();
+                  await firstGate;
+                }
+              },
+            };
+            const controller = new AbortController();
+            const abandonedPromise = registerCollaborativeTools(context, h.service, { signal: controller.signal });
+            await firstStarted;
+            controller.abort();
+            assert.equal(tools.size, 0, 'aborting the owning mount must synchronously revoke partial registrations');
+            releaseFirst();
+            const abandoned = await abandonedPromise;
+            assert.deepEqual(abandoned.getRegisteredNames(), []);
+
+            const replacement = await registerCollaborativeTools(context, h.service);
+            for (const name of CORE_TOOL_NAMES) assert.ok(tools.has(name));
+            replacement.dispose();
+            assert.equal(tools.size, 0);
+          });
+
+          '''
+          replace_once('tests/phase35d-webmcp-coactivity.test.ts', marker, regression_tests + marker)
+          PY
+      - name: Verify diff hygiene
+        shell: bash
+        run: |
+          git diff --check
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' \
+            apps/web/components/workbench-m35d-stage3.tsx \
+            e2e/phase35d-native-webmcp.spec.ts \
+            packages/webmcp/src/m35d.ts \
+            tests/phase35d-webmcp-coactivity.test.ts | sort)"
+          test "$changed" = "$expected" || { echo "Unexpected changed files:"; echo "$changed"; exit 1; }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Run WebMCP lifecycle unit regression tests
+        run: node --experimental-strip-types --test tests/phase35d-webmcp-coactivity.test.ts
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Run full browser E2E suite
+        run: npm run test:e2e
+      - name: Run native WebMCP host evaluation
+        run: xvfb-run -a npm run test:webmcp:native
+      - run: npm run benchmark:level2
+      - run: npm run benchmark:level3
+      - run: rm -rf benchmark-results && mkdir -p benchmark-results
+      - run: npm run benchmark:scale
+      - run: npm run benchmark:level4-design
+      - run: npm run benchmark:level4-scale
+      - name: Commit qualified patch to hardening branch
+        shell: bash
+        run: |
+          git config user.name "insightlabs38-pixel"
+          git config user.email "insightlabs38@gmail.com"
+          git add apps/web/components/workbench-m35d-stage3.tsx e2e/phase35d-native-webmcp.spec.ts packages/webmcp/src/m35d.ts tests/phase35d-webmcp-coactivity.test.ts
+          git commit -m "fix: make native WebMCP registration race-safe"
+          git push origin HEAD:ui-winning-level-hardening
