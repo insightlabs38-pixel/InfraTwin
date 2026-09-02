@@ -2,6 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: process.env.WEBMCP_DEMO_CAPTURE === '1' ? [] : ['demo/**'],
   fullyParallel: false,
   workers: 1,
   timeout: 75_000,

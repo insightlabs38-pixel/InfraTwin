@@ -14,6 +14,15 @@ async function selectNetwork(page: Page, id: string) {
   await expect(page.getByTestId('network-selector')).toHaveValue(id);
 }
 
+
+async function chooseSearchable(page: Page, testId: string, value: string) {
+  const trigger = page.getByTestId(testId);
+  await trigger.click();
+  const control = trigger.locator('..');
+  await control.getByRole('combobox').fill(value);
+  await control.getByRole('option').filter({ hasText: value }).first().click();
+}
+
 async function semanticHashes(page: Page) {
   return {
     model: await page.getByTestId('base-model-hash').textContent(),
@@ -97,7 +106,7 @@ test('Phase 3.5C.5 4: Settings/Model is separate from the ChangePlan and navigat
   await page.getByTestId('nav-settings').click();
   await expect(page.getByTestId('settings-view')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Network model and assumptions' })).toBeVisible();
-  await page.getByTestId('settings-upgrade-link').selectOption('R4');
+  await chooseSearchable(page, 'settings-upgrade-link', 'R4');
   await expect(page.getByTestId('upgrade-profile-editor')).toBeVisible();
   await page.getByTestId('nav-network').click();
   await expect(page.getByTestId('plan-change-list')).toContainText('Take R2 offline');

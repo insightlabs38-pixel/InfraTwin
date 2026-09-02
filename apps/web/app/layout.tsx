@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import './globals.css';
 import './phase35b.css';
 import './phase35c5.css';
+import './hardening.css';
 
 export const metadata: Metadata = {
   title: 'InfraTwin',

@@ -174,7 +174,7 @@ async function importLevel4Reference(page: import('@playwright/test').Page) {
   await expect(page.getByTestId('import-review')).toBeVisible();
   await page.getByTestId('open-imported-network').click();
   await expect(page.getByTestId('topology-link-X')).toBeVisible();
-  await page.getByText('Constraints', { exact: true }).click();
+  await page.getByTestId('plan-constraints').locator('summary').click();
   await page.getByTestId('allow-routing-changes').check();
 }
 

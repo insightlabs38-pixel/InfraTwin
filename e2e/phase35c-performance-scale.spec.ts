@@ -90,12 +90,12 @@ test('Phase 3.5C 4: 500-node scale proof reports bounded N-1 as partial coverage
 
 test('Phase 3.5C 5: routing-LP scale guard is explicit while deterministic analysis remains available', async ({ page }) => {
   await openScaleProof(page);
-  await expect(page.getByTestId('compute-profile')).toContainText('NOT RECOMMENDED');
+  await expect(page.getByTestId('compute-profile')).toContainText(/Outside interactive envelope/i);
   await page.getByTestId('advanced-toggle').click();
   await expect(page.getByTestId('advanced-drawer')).toBeVisible();
   await expect(page.getByTestId('routing-lp-guidance')).toContainText(/flow variables/i);
-  await page.getByTestId('routing-lp-action').click();
-  await expect(page.getByTestId('routing-lp-result')).toContainText(/Not recommended at this scale/i, { timeout: 10_000 });
+  await expect(page.getByTestId('routing-lp-action')).toBeDisabled();
+  await expect(page.getByTestId('routing-lp-guidance')).toContainText(/flow variables/i);
   await page.getByTestId('advanced-toggle').click();
   await page.getByTestId('analyze-plan').click();
   await expect(page.getByTestId('capacity-analysis-status')).toContainText(/RUNNING.*worker/i, { timeout: 5_000 });
@@ -112,7 +112,7 @@ test('Phase 3.5C 6: Compute Profile reports live execution mode/runtime rather t
   await page.getByTestId('advanced-toggle').click();
   await expect(page.getByTestId('advanced-drawer')).toBeVisible();
   const profile = await page.getByTestId('compute-profile').innerText();
-  expect(profile).toMatch(/Last execution: (main-thread|worker) · [0-9.]+ ms live/);
+  expect(profile).toMatch(/Last analysis\s+(main-thread|worker) · [0-9.]+ ms live/i);
   expect(profile).toContain('1200 eligible link failures');
-  expect(profile).toMatch(/ROUTING LP\s+NOT RECOMMENDED/i);
+  expect(profile).toMatch(/ROUTING LP\s+Outside interactive envelope/i);
 });

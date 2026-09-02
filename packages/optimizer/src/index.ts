@@ -216,8 +216,8 @@ export function estimateTrafficAllocationLP(project: NetworkProject): TrafficAll
     constraints,
     recommended,
     reason: recommended
-      ? `Estimated ${flowVariables.toLocaleString()} flow variables are within the measured Phase 3.5C routing-LP envelope.`
-      : `Estimated ${flowVariables.toLocaleString()} flow variables exceed the measured Phase 3.5C routing-LP envelope of ${ROUTING_LP_RECOMMENDED_MAX_FLOW_VARIABLES.toLocaleString()}; deterministic routing and Change Plan analysis remain available.`,
+      ? `Estimated ${flowVariables.toLocaleString()} flow variables are within the validated interactive routing-LP envelope.`
+      : `Estimated ${flowVariables.toLocaleString()} flow variables exceed the validated interactive routing-LP envelope of ${ROUTING_LP_RECOMMENDED_MAX_FLOW_VARIABLES.toLocaleString()}; deterministic routing and Change Plan analysis remain available.`,
   };
 }
 
@@ -410,8 +410,8 @@ export function estimateCapacityMILP(project: NetworkProject, requirementsInput:
     estimatedConstraints,
     recommended,
     reason: recommended
-      ? `Estimated ${decisionVariables.toLocaleString()} decisions across ${scenarioCount.toLocaleString()} scenario(s) are within the measured Phase 3.5C capacity-MILP envelope.`
-      : `Estimated decision×scenario workload ${decisionScenarioProduct.toLocaleString()} exceeds the measured Phase 3.5C capacity-MILP envelope of ${CAPACITY_MILP_RECOMMENDED_MAX_DECISION_SCENARIO_PRODUCT.toLocaleString()}.`,
+      ? `Estimated ${decisionVariables.toLocaleString()} decisions across ${scenarioCount.toLocaleString()} scenario(s) are within the validated interactive capacity-MILP envelope.`
+      : `Estimated decision×scenario workload ${decisionScenarioProduct.toLocaleString()} exceeds the validated interactive capacity-MILP envelope of ${CAPACITY_MILP_RECOMMENDED_MAX_DECISION_SCENARIO_PRODUCT.toLocaleString()}.`,
   };
 }
 

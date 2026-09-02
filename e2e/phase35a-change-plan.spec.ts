@@ -11,6 +11,15 @@ async function selectNetwork(page: import('@playwright/test').Page, id: string) 
   await expect(page.getByTestId('network-selector')).toHaveValue(id);
 }
 
+
+async function chooseSearchable(page: import('@playwright/test').Page, testId: string, value: string) {
+  const trigger = page.getByTestId(testId);
+  await trigger.click();
+  const control = trigger.locator('..');
+  await control.getByRole('combobox').fill(value);
+  await control.getByRole('option').filter({ hasText: value }).first().click();
+}
+
 async function waitOptimizer(page: import('@playwright/test').Page) {
   await expect(page.getByTestId('optimizer-status')).toContainText(/ready|HiGHS WASM/i, { timeout: 30_000 });
 }
@@ -40,7 +49,7 @@ test('Phase 3.5A: human maintenance plan is non-destructive and reversible in th
 test('Phase 3.5A: human-created selected-demand growth reproduces Growth Wall without a special runGrowth path', async ({ page }) => {
   await open(page);
   await selectNetwork(page, 'growth-wall');
-  await page.getByText('Traffic changes', { exact: true }).click();
+  await page.getByText('Planned traffic changes', { exact: true }).click();
   await page.getByText('Add demand growth', { exact: true }).click();
   await page.getByTestId('growth-all-demands').uncheck();
   await page.getByTestId('growth-demand-GD1').check();
@@ -81,11 +90,11 @@ test('Phase 3.5A: add a new service through UI and keep the base project unchang
   await open(page);
   await selectNetwork(page, 'growth-wall');
   const baseHash = await page.getByTestId('base-model-hash').textContent();
-  await page.getByText('Traffic changes', { exact: true }).click();
+  await page.getByText('Planned traffic changes', { exact: true }).click();
   await page.getByText('Add new service demand', { exact: true }).click();
   await page.getByTestId('new-demand-name').fill('Payments replication');
-  await page.getByTestId('new-demand-source').selectOption('NYC');
-  await page.getByTestId('new-demand-target').selectOption('SEA');
+  await chooseSearchable(page, 'new-demand-source', 'NYC');
+  await chooseSearchable(page, 'new-demand-target', 'SEA');
   await page.getByTestId('new-demand-bandwidth').fill('12');
   await page.getByTestId('new-demand-class').selectOption('gold');
   await page.getByTestId('add-new-demand').click();

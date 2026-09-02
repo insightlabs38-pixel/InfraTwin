@@ -7,6 +7,7 @@ import { useWorkbenchStage4 } from './workbench-m35d-stage4';
 import { useWorkbenchStage5 } from './workbench-m35d-stage5';
 import { useWorkbenchStage6 } from './workbench-m35d-stage6';
 import { WorkbenchM35dView } from './workbench-m35d-view';
+import { AppErrorBoundary } from './app-error-boundary';
 
 export function Workbench() {
   const scope: any = {};
@@ -16,5 +17,5 @@ export function Workbench() {
   useWorkbenchStage4(scope);
   useWorkbenchStage5(scope);
   useWorkbenchStage6(scope);
-  return <WorkbenchM35dView scope={scope} />;
+  return <AppErrorBoundary><WorkbenchM35dView scope={scope} /></AppErrorBoundary>;
 }

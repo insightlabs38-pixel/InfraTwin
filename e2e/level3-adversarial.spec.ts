@@ -160,6 +160,8 @@ test('browser WebMCP lifecycle registers shared executable capabilities and revo
 
   await page.getByTestId('nav-plans').click();
   await page.getByTestId('clear-plan').click();
+  await expect(page.getByRole('alertdialog')).toBeVisible();
+  await page.getByRole('button', { name: 'Clear plan' }).click();
   await page.getByTestId('nav-network').click();
   await expectInactive(page, ['inspect_violation', 'focus_violation', 'find_bottlenecks', 'propose_mitigation']);
   const resetSnapshot = await snapshot(page);

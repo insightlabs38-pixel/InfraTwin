@@ -556,6 +556,29 @@ export function describePlanChange(change: PlanChange): string {
   }
 }
 
+export function formatPlanConstraintValue<K extends keyof PlanConstraints>(key: K, value: PlanConstraints[K]): string {
+  switch (key) {
+    case 'targetUtilizationPct': return `${value as number}% target utilization`;
+    case 'budgetCostUnits': return value === null ? 'no budget cap' : `${value as number} cost units`;
+    case 'requireN1': return (value as boolean) ? 'N-1 required' : 'N-1 optional';
+    case 'protectedServiceClassIds': {
+      const ids = value as string[];
+      return ids.length ? ids.join(', ') : 'no protected service classes';
+    }
+    case 'allowedMitigationActions': {
+      const actions = value as MitigationActionClasses;
+      const enabled = [actions.capacityUpgrades ? 'capacity upgrades' : '', actions.routingChanges ? 'routing changes' : '', actions.newLinks ? 'declared new links' : ''].filter(Boolean);
+      return enabled.length ? enabled.join(', ') : 'no mitigation actions';
+    }
+    case 'maxCandidatePaths': return `${value as number} candidate path${value === 1 ? '' : 's'} per demand`;
+    case 'candidateLinkOptions': {
+      const links = value as CandidateLinkOption[];
+      return links.length ? links.map((item) => `${item.id} (${item.source}↔${item.target}, ${item.capacityGbps} Gbps, cost ${item.cost})`).join('; ') : 'no declared candidate links';
+    }
+    default: return 'updated constraint';
+  }
+}
+
 function semanticPlanChange(change: PlanChange): unknown {
   return { type: change.type, target: change.target, payload: change.payload };
 }
@@ -814,7 +837,7 @@ export function setPlanConstraint<K extends keyof PlanConstraints>(plan: ChangeP
   const next = cloneChangePlan(plan); (next.constraints[key] as PlanConstraints[K]) = JSON.parse(JSON.stringify(value)) as PlanConstraints[K];
   if (key === 'protectedServiceClassIds') next.constraints.protectedServiceClassIds = normalizeStringIds(next.constraints.protectedServiceClassIds);
   if (key === 'candidateLinkOptions') next.constraints.candidateLinkOptions = [...next.constraints.candidateLinkOptions].sort((a, b) => a.id.localeCompare(b.id));
-  next.history.push(historyEvent(next, 'human', 'set_constraint', `Set ${String(key)} to ${Array.isArray(value) ? value.join(', ') || 'none' : String(value)}`, now));
+  next.history.push(historyEvent(next, 'human', 'set_constraint', `Set ${String(key)}: ${formatPlanConstraintValue(key, value)}`, now));
   return invalidatePlan(next, now, 'Verification invalidated because plan constraints changed.');
 }
 

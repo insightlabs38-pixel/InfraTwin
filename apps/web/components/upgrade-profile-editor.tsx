@@ -31,7 +31,7 @@ export function UpgradeProfileEditor({ links, onApply }: UpgradeProfileEditorPro
     <section className="upgrade-editor" data-testid="upgrade-profile-editor" aria-label="Network assumptions and upgrade catalog">
       <div className="workspace-subheading">
         <div><p className="eyebrow">Network assumptions / upgrade catalog</p><strong>{links.length === 1 ? `Selected link ${links[0].id}` : `${links.length} selected links`}</strong></div>
-        <small>Base-network design space · not a Change Plan action</small>
+        <small>Network-wide upgrade choices · applies to future plans</small>
       </div>
       <p className="muted compact-copy">Current capacity {links.length === 1 ? `${links[0].capacityGbps} Gbps` : `up to ${maximumCurrent} Gbps`}. Costs remain abstract cost units unless the imported model defines real economics.</p>
       <div className="upgrade-options">
