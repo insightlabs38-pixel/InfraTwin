@@ -105,14 +105,14 @@ export function ImportNetworkDialog({ open, onClose, onOpenProject, onOpenWorksp
         <button type="button" aria-label="Canonical JSON" className={mode === 'json' ? 'active' : ''} onClick={() => { setMode('json'); resetReview(); }}>InfraTwin JSON</button>
       </div>
 
-      {mode === 'csv' ? <div className="import-fields">
+      {mode === 'csv' ? <div key="csv" className="import-fields">
         <label>Project name<input value={projectName} onChange={(event) => setProjectName(event.target.value)} /></label>
         <label>nodes.csv<input data-testid="csv-nodes-file" type="file" accept=".csv,text/csv" onChange={(event) => { setNodesFile(event.target.files?.[0]); resetReview(); }} /></label>
         <label>links.csv<input data-testid="csv-links-file" type="file" accept=".csv,text/csv" onChange={(event) => { setLinksFile(event.target.files?.[0]); resetReview(); }} /></label>
         <label>demands.csv <small>optional</small><input data-testid="csv-demands-file" type="file" accept=".csv,text/csv" onChange={(event) => { setDemandsFile(event.target.files?.[0]); resetReview(); }} /></label>
         <details className="schema-details"><summary>CSV column requirements</summary><p>Nodes: ID/name/region/type. Links: ID/source/target/capacityGbps/weight/bidirectional. Demands: ID/name/source/target/bandwidthGbps/serviceClassId. Blank/default demand classes map to one disclosed imported default class when no service-class catalog is supplied.</p></details>
         <button type="button" className="primary" data-testid="review-csv-import" onClick={() => void reviewCsv()}>Review CSV import</button>
-      </div> : <div className="import-fields">
+      </div> : <div key="json" className="import-fields">
         <label>Network or workspace JSON<input data-testid="json-import-file" type="file" accept="application/json,.json" onChange={(event) => void reviewJson(event.target.files?.[0])} /></label>
         <p className="muted compact-copy">Workspace exports restore the matching base network and ChangePlan together. ChangePlan exports load only when their base network matches the current network. Canonical network JSON starts a fresh ChangePlan.</p>
       </div>}
