@@ -12,6 +12,20 @@ async function open(page: Page, viewport: { width: number; height: number }) {
   await expect(page.getByTestId('topology-canvas')).toBeVisible();
 }
 
+async function expectTopologyChromeInsideViewport(page: Page, viewport: { width: number; height: number }) {
+  const stage = page.locator('.topology-stage');
+  const legend = page.locator('.topology-legend');
+  await expect(stage).toBeVisible();
+  await expect(legend).toBeVisible();
+  const [stageBox, legendBox] = await Promise.all([stage.boundingBox(), legend.boundingBox()]);
+  expect(stageBox).not.toBeNull();
+  expect(legendBox).not.toBeNull();
+  expect(stageBox!.height).toBeGreaterThan(120);
+  expect(legendBox!.x).toBeGreaterThanOrEqual(-1);
+  expect(legendBox!.x + legendBox!.width).toBeLessThanOrEqual(viewport.width + 1);
+  expect(legendBox!.y + legendBox!.height).toBeLessThanOrEqual(viewport.height + 1);
+}
+
 async function importLevel4Reference(page: Page) {
   await page.getByTestId('import-json').click();
   await page.getByRole('button', { name: 'Canonical JSON' }).click();
@@ -37,6 +51,13 @@ test('visual matrix: clean product shell is coherent at every required viewport'
   ];
   for (const viewport of viewports) {
     await open(page, viewport);
+    await expectTopologyChromeInsideViewport(page, viewport);
+    if (viewport.width <= 760) {
+      await expect(page.locator('.plan-pane')).toHaveAttribute('aria-hidden', 'true');
+      await expect(page.locator('.inspector-slot')).toHaveAttribute('aria-hidden', 'true');
+    } else if (viewport.width <= 1024) {
+      await expect(page.locator('.inspector-slot')).toHaveAttribute('aria-hidden', 'true');
+    }
     await attach(page, testInfo, `ui-clean-${viewport.width}x${viewport.height}`);
     const dimensions = await page.evaluate(() => ({
       sw: document.documentElement.scrollWidth,

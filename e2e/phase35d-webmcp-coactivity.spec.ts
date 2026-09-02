@@ -29,7 +29,7 @@ test('M3.5D 2 — agent edit mutates the visible ChangePlan, topology context, p
   const edit = await executeTool(page, 'add_plan_change', { type: 'disable_link', target: 'selection' });
   expect(edit.ok).toBe(true);
   await expect(page.getByTestId('plan-change-list')).toContainText('Take L1 offline');
-  await expect(page.getByTestId('plan-change-list')).toContainText('Agent-authored');
+  await expect(page.getByTestId('plan-change-list')).toContainText('Agent');
   await expect(page.getByTestId('link-inspector-L1')).toContainText('Planned outage');
   await expect(page.getByTestId('collaboration-indicator')).toContainText(/Agent/i);
 
@@ -63,7 +63,7 @@ test('M3.5D 3/4 — human lock invalidates the old agent proposal and replanning
   await page.getByTestId('nav-network').click();
   await selectLink(page, lockedLinkId);
   await page.getByTestId(`lock-link-${lockedLinkId}`).check();
-  await expect(page.getByTestId('candidate-proposals')).toContainText('stale after plan revision');
+  await expect(page.getByTestId('candidate-proposals')).toContainText(/stale.*needs replanning/i);
   const overridden = await executeTool(page, 'inspect_plan');
   expect(overridden.result.restrictions.lockedLinkIds).toContain(lockedLinkId);
   expect(overridden.result.proposals.some((proposal: { stale: boolean }) => proposal.stale)).toBe(true);
@@ -117,7 +117,7 @@ test('M3.5D flagship — human outage + agent Payments growth share one plan, fa
   await openHarnessedWorkbench(page);
   await selectLink(page, 'BB-NE-CE-01');
   await page.getByTestId('plan-link-outage-BB-NE-CE-01').click();
-  await expect(page.getByTestId('plan-change-list')).toContainText('Human-authored');
+  await expect(page.getByTestId('plan-change-list')).toContainText('Human');
 
   const workspace = await executeTool(page, 'inspect_workspace');
   const selection = await executeTool(page, 'inspect_selection');
@@ -128,7 +128,7 @@ test('M3.5D flagship — human outage + agent Payments growth share one plan, fa
   const growth = await executeTool(page, 'add_plan_change', { type: 'demand_growth', demandIds: paymentDemandIds, multiplier: 1.2 });
   expect(growth.ok).toBe(true);
   await expect(page.getByTestId('plan-change-list')).toContainText(/Payments|10 demands/i);
-  await expect(page.getByTestId('plan-change-list')).toContainText('Agent-authored');
+  await expect(page.getByTestId('plan-change-list')).toContainText('Agent');
 
   const analysis = await executeTool(page, 'analyze_plan');
   expect(analysis.ok).toBe(true);
@@ -154,7 +154,7 @@ test('M3.5D flagship — human outage + agent Payments growth share one plan, fa
   const proposalLinkId = String(firstLink.target.id);
   await selectLink(page, proposalLinkId);
   await page.getByTestId(`lock-link-${proposalLinkId}`).check();
-  await expect(page.getByTestId('candidate-proposals')).toContainText('stale after plan revision');
+  await expect(page.getByTestId('candidate-proposals')).toContainText(/stale.*needs replanning/i);
   const afterOverride = await executeTool(page, 'inspect_plan');
   expect(afterOverride.result.restrictions.lockedLinkIds).toContain(proposalLinkId);
   expect(afterOverride.result.proposals.some((proposal: { stale: boolean }) => proposal.stale)).toBe(true);

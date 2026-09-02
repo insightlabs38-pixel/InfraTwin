@@ -10,13 +10,24 @@ function webmcpLabel(status:string){return status==='registered'?'WebMCP connect
 export function WorkbenchM35dNetworkView({scope}:{scope:WorkbenchScope}){
   const { project, plan, collaborationNotice, webmcpStatus, analysisStatus, analyzeCurrentPlan, analysisControllerRef, resilienceStatus, canRunResilience, runPlanN1, directRunControllerRef, optimizerReady, optimizerStatus, runOptimizer, canRunMitigation, mitigationDisabledReason, n1DisabledReason, workflowGuidance, leftPanelCollapsed, setLeftPanelCollapsed, rightPanelCollapsed, setRightPanelCollapsed, trafficEditorOpen, setTrafficEditorOpen, planRef, mutatePlan, runWorkspaceAction, workspaceService, handleDemandBandwidth, handleAddDemand, handleGrowth, acceptProposal, rejectProposal, acceptAll, discardCandidate, verifyCurrentCandidate, candidateStale, analysis, analysisAuthoritative, selectedLinkIds, selectedLinkId, selectedNodeId, selectedDemandId, plannedOutageLinkIds, plannedOutageNodeIds, plannedChangedLinkIds, plannedChangedNodeIds, proposalLinkIds, proposalNodeIds, lockedLinkIds, lockedNodeIds, violationLinkIds, batchPlanOutage, batchLockLinks, activeView, renderInspector } = scope;
   useEffect(()=>{
-    const enforceNarrowPanels=()=>{ if(window.innerWidth<=760 && !leftPanelCollapsed && !rightPanelCollapsed) setRightPanelCollapsed(true); };
-    enforceNarrowPanels();
-    window.addEventListener('resize',enforceNarrowPanels);
-    return ()=>window.removeEventListener('resize',enforceNarrowPanels);
-  },[leftPanelCollapsed,rightPanelCollapsed,setRightPanelCollapsed]);
-  const openPlan=()=>{setLeftPanelCollapsed(false); if(window.innerWidth<=760)setRightPanelCollapsed(true);};
-  const openInspector=()=>{setRightPanelCollapsed(false); if(window.innerWidth<=760)setLeftPanelCollapsed(true);};
+    let lastBucket='';
+    const applyResponsivePanelDefaults=()=>{
+      const bucket=window.innerWidth<=760?'mobile':window.innerWidth<=1024?'tablet':'desktop';
+      if(bucket===lastBucket)return;
+      lastBucket=bucket;
+      if(bucket==='mobile'){
+        setLeftPanelCollapsed(true);
+        setRightPanelCollapsed(true);
+      }else if(bucket==='tablet'){
+        setRightPanelCollapsed(true);
+      }
+    };
+    applyResponsivePanelDefaults();
+    window.addEventListener('resize',applyResponsivePanelDefaults);
+    return ()=>window.removeEventListener('resize',applyResponsivePanelDefaults);
+  },[setLeftPanelCollapsed,setRightPanelCollapsed]);
+  const openPlan=()=>{setLeftPanelCollapsed(false); if(window.innerWidth<=1024)setRightPanelCollapsed(true);};
+  const openInspector=()=>{setRightPanelCollapsed(false); if(window.innerWidth<=1024)setLeftPanelCollapsed(true);};
   return <section className="network-view" data-testid="network-view" hidden={activeView !== 'network'}>
     <div className="network-toolbar">
       <div className="toolbar-context" data-testid="network-scale"><h1 title={plan.name}>{plan.name}</h1><span>{plan.changes.length} planned change{plan.changes.length===1?'':'s'} · {plan.restrictions.lockedLinkIds.length+plan.restrictions.lockedNodeIds.length} lock{plan.restrictions.lockedLinkIds.length+plan.restrictions.lockedNodeIds.length===1?'':'s'}</span><span className="network-counts">{project.nodes.length} nodes · {project.links.length} links · {project.demands.length} demands</span></div>
@@ -29,7 +40,7 @@ export function WorkbenchM35dNetworkView({scope}:{scope:WorkbenchScope}){
         <ChangePlanPanel project={project} plan={plan} trafficEditorOpen={trafficEditorOpen} onTrafficEditorOpenChange={setTrafficEditorOpen} onRenamePlan={(name) => { if (name.trim() && name.trim() !== planRef.current.name) mutatePlan((current:any) => renameChangePlan(current, name)); }} onRemoveChange={(id) => runWorkspaceAction(() => { workspaceService.removePlanChange(id, 'human'); })} onSetConstraint={(key, value) => runWorkspaceAction(() => { workspaceService.setPlanConstraint(key, value as never, 'human'); })} onSetBandwidth={handleDemandBandwidth} onAddDemand={handleAddDemand} onAddGrowth={handleGrowth} onAcceptProposal={acceptProposal} onRejectProposal={rejectProposal} onAcceptAll={acceptAll} onDiscardCandidate={discardCandidate} onVerifyProposal={() => void verifyCurrentCandidate()} candidateStale={candidateStale} />
       </div>
       <section className="topology-pane" data-testid="topology-pane" aria-label="Network topology workspace">
-        <TopologyCanvas project={project} analysis={analysis} analysisAuthoritative={analysisAuthoritative} selectedLinkIds={selectedLinkIds} selectedLinkId={selectedLinkId} selectedNodeId={selectedNodeId} selectedDemandId={selectedDemandId} plannedOutageLinkIds={plannedOutageLinkIds} plannedOutageNodeIds={plannedOutageNodeIds} plannedChangedLinkIds={plannedChangedLinkIds} plannedChangedNodeIds={plannedChangedNodeIds} proposalLinkIds={proposalLinkIds} proposalNodeIds={proposalNodeIds} lockedLinkIds={lockedLinkIds} lockedNodeIds={lockedNodeIds} violationLinkIds={violationLinkIds} onSelectLink={(id) => { workspaceService.select({ kind: 'link', id }); if(window.innerWidth<=760)openInspector(); }} onSelectNode={(id) => { workspaceService.select({ kind: 'node', id }); if(window.innerWidth<=760)openInspector(); }} onSelectDemand={(id) => { workspaceService.select({ kind: 'demand', id }); if(window.innerWidth<=760)openInspector(); }} onBatchPlannedOutage={batchPlanOutage} onBatchLockLinks={batchLockLinks} />
+        <TopologyCanvas project={project} analysis={analysis} analysisAuthoritative={analysisAuthoritative} selectedLinkIds={selectedLinkIds} selectedLinkId={selectedLinkId} selectedNodeId={selectedNodeId} selectedDemandId={selectedDemandId} plannedOutageLinkIds={plannedOutageLinkIds} plannedOutageNodeIds={plannedOutageNodeIds} plannedChangedLinkIds={plannedChangedLinkIds} plannedChangedNodeIds={plannedChangedNodeIds} proposalLinkIds={proposalLinkIds} proposalNodeIds={proposalNodeIds} lockedLinkIds={lockedLinkIds} lockedNodeIds={lockedNodeIds} violationLinkIds={violationLinkIds} onSelectLink={(id) => { workspaceService.select({ kind: 'link', id }); if(window.innerWidth<=1024)openInspector(); }} onSelectNode={(id) => { workspaceService.select({ kind: 'node', id }); if(window.innerWidth<=1024)openInspector(); }} onSelectDemand={(id) => { workspaceService.select({ kind: 'demand', id }); if(window.innerWidth<=1024)openInspector(); }} onBatchPlannedOutage={batchPlanOutage} onBatchLockLinks={batchLockLinks} />
       </section>
       <div className="inspector-slot" aria-hidden={rightPanelCollapsed}>{renderInspector()}</div>
     </div>

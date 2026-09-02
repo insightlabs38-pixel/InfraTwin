@@ -23,7 +23,7 @@ export function WorkbenchM35dMainView({scope}:{scope:any}){
   },[importMessage,setImportMessage]);
   return <>
     <header className="appbar">
-      <div className="brand-block"><strong>InfraTwin</strong><span>Plan and verify network changes before production.</span></div>
+      <div className="brand-block"><strong>InfraTwin</strong><span>Plan changes before production.</span></div>
       <nav className="destination-nav" aria-label="Primary application views">
         {APP_DESTINATIONS.map((view) => { const label=view === 'settings' ? 'Settings / Model' : view[0].toUpperCase() + view.slice(1); return <button key={view} data-testid={`nav-${view}`} className={activeView === view ? 'active' : ''} aria-label={label} title={label} onClick={() => setActiveView(view)}><span className="nav-icon" aria-hidden="true">{NAV_ICONS[view]}</span><span className="nav-label">{label}</span></button>; })}
       </nav>

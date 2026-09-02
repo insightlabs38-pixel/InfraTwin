@@ -81,6 +81,10 @@ test('Phase 3.5A: human restriction invalidates verified optimizer proposal and 
   await page.getByTestId('lock-link-R4').check();
   await expect(page.getByTestId('candidate-verification')).toContainText('STALE');
   await expect(page.getByTestId('proposal-R4')).toContainText(/stale/i);
+  await expect(page.getByTestId('run-optimizer')).toBeDisabled();
+  await expect(page.getByTestId('run-optimizer')).toHaveAttribute('title', /Analyze the current ChangePlan first/i);
+  await page.getByTestId('analyze-plan').click();
+  await expect(page.getByTestId('verdict')).toHaveText('FAIL');
   await page.getByTestId('run-optimizer').click();
   await expect(page.getByTestId('capacity-optimizer-result')).toContainText(/Infeasible/i, { timeout: 30_000 });
   await expect(page.getByTestId('optimizer-status')).toContainText(/locked/i);
@@ -122,7 +126,7 @@ test('Phase 3.5A: individual candidate accept/reject is visible, preserves prove
   await expect(page.getByTestId('candidate-verification')).toContainText('STALE');
   await page.getByTestId('proposal-R5').getByRole('button', { name: 'Reject' }).click();
   await expect(page.getByTestId('plan-change-list')).toContainText('Set R4 capacity to 14 Gbps');
-  await expect(page.getByTestId('plan-change-list')).toContainText('Agent/optimizer proposal accepted by human');
+  await expect(page.getByTestId('plan-change-list').locator('.actor-chip.agent')).toContainText('Agent · accepted by human');
   await expect(page.getByTestId('plan-change-list')).not.toContainText('Set R5 capacity to 14 Gbps');
   await page.getByTestId('nav-plans').click();
   await expect(page.getByTestId('plan-history')).toContainText('Optimizer proposed 2 changes');

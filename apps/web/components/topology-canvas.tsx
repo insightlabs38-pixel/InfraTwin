@@ -279,9 +279,9 @@ export function TopologyCanvas(props: TopologyCanvasProps) {
       const bounds = regionBounds.get(region); if (!bounds) continue;
       context.globalAlpha = focusedRegion && focusedRegion !== region ? 0.16 : 0.55;
       context.strokeStyle = '#31435b'; context.lineWidth = 1 * worldPerPixel; context.setLineDash([6 * worldPerPixel, 8 * worldPerPixel]);
-      context.strokeRect(bounds.minX - 48, bounds.minY - 48, bounds.width + 96, bounds.height + 96);
+      context.strokeRect(bounds.minX - 56, bounds.minY - 68, bounds.width + 112, bounds.height + 124);
       context.setLineDash([]); context.fillStyle = '#63768f'; context.font = `700 ${12 * worldPerPixel}px ui-sans-serif, system-ui`;
-      context.fillText(region, bounds.minX - 28, bounds.minY - 18);
+      context.fillText(region, bounds.minX - 30, bounds.minY - 48);
     }
 
     const orderedLinks = [...snapshot.links].sort((a, b) => Number(linkPriority(a.id)) - Number(linkPriority(b.id)) || a.id.localeCompare(b.id));
@@ -417,7 +417,7 @@ export function TopologyCanvas(props: TopologyCanvasProps) {
             {regions.map((region) => {
               if (!enabledRegions.has(region)) return null;
               const bounds = regionBounds.get(region); if (!bounds) return null;
-              return <g key={`region:${region}`} className={`region-hull ${focusedRegion && focusedRegion !== region ? 'dimmed' : ''}`}><rect x={bounds.minX - 48} y={bounds.minY - 48} width={bounds.width + 96} height={bounds.height + 96} rx={44} /><text x={bounds.minX - 28} y={bounds.minY - 18}>{region}</text></g>;
+              return <g key={`region:${region}`} className={`region-hull ${focusedRegion && focusedRegion !== region ? 'dimmed' : ''}`}><rect x={bounds.minX - 56} y={bounds.minY - 68} width={bounds.width + 112} height={bounds.height + 124} rx={44} /><text x={bounds.minX - 30} y={bounds.minY - 48}>{region}</text></g>;
             })}
             <g className="link-layer">
               {snapshot.links.map((link) => {
