@@ -138,7 +138,11 @@ export function useWorkbenchStage2(scope: any) {
     const restoredProject = cloneProject(nextProject);
     const restoredPlan = clonePlan(nextPlan);
     projectRef.current = restoredProject; planRef.current = restoredPlan;
-    setProject(restoredProject); setPlan(restoredPlan); setSelectedScenarioId('imported');
+    const bundledScenario = networkTemplates.find((scenario) => {
+      const bundledProject = loadScenario(scenario.id);
+      return bundledProject.id === restoredProject.id && modelHash(bundledProject) === modelHash(restoredProject);
+    });
+    setProject(restoredProject); setPlan(restoredPlan); setSelectedScenarioId(bundledScenario?.id ?? 'imported');
     setRecoveryDraft(null); setDraftPersistenceEnabled(true);
   };
   const requestPlanReset = (title: string, message: string, confirmLabel: string, action: () => void) => {

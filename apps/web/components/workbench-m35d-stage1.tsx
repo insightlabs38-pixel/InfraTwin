@@ -139,7 +139,7 @@ export function useWorkbenchStage1(scope: any) {
   const [newPlanName, setNewPlanName] = useState('Change Plan');
   const [inspectorCapacityDraft, setInspectorCapacityDraft] = useState<number | null>(null);
   const [violationDisplay, setViolationDisplay] = useState<{ resultId: string; count: number }>({ resultId: '', count: VIOLATION_RENDER_BATCH_SIZE });
-  const [recoveryDraft, setRecoveryDraft] = useState<WorkspaceBundle | null>(() => readLocalWorkspaceDraft());
+  const [recoveryDraft, setRecoveryDraft] = useState<WorkspaceBundle | null>(null);
   const [draftPersistenceEnabled, setDraftPersistenceEnabled] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] = useState<ConfirmationRequest | null>(null);
   const directRunControllerRef = useRef<AbortController | null>(null);
@@ -176,7 +176,12 @@ export function useWorkbenchStage1(scope: any) {
   selectedLinkRef.current = selectedLinkId;
   selectedNodeRef.current = selectedNodeId;
   selectedEvidenceRef.current = selectedEvidence;
-  useEffect(() => { setCompute(detectComputeCapabilities()); if (!recoveryDraft) setDraftPersistenceEnabled(true); }, []);
+  useEffect(() => {
+    setCompute(detectComputeCapabilities());
+    const localDraft = readLocalWorkspaceDraft();
+    setRecoveryDraft(localDraft);
+    setDraftPersistenceEnabled(!localDraft);
+  }, []);
   useEffect(() => {
     if (!draftPersistenceEnabled) return;
     writeLocalWorkspaceDraft(project, plan);

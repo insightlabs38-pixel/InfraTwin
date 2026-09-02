@@ -15,9 +15,10 @@ async function addMaintenanceOutage(page: Page) {
 
 test('UI hardening: unanalyzed engineering values are never presented as zero evidence and disabled actions explain why', async ({ page }) => {
   await open(page);
-  await page.getByTestId('topology-search').fill('BB-SE-CE-01');
-  await page.getByTestId('search-result-link-BB-SE-CE-01').click();
-  const inspector = page.getByTestId('link-inspector-BB-SE-CE-01');
+  await page.getByTestId('network-selector').selectOption('national-backbone-scale-test');
+  await page.getByTestId('topology-search').fill('l-00000');
+  await page.getByTestId('search-result-link-l-00000').click();
+  const inspector = page.getByTestId('link-inspector-l-00000');
   await expect(inspector).toContainText('Not analyzed');
   await expect(inspector).not.toContainText(/Utilization\s*0%/i);
   await expect(page.getByTestId('run-optimizer')).toBeDisabled();
