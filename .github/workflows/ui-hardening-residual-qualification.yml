@@ -1,0 +1,23 @@
+name: UI hardening residual qualification
+
+on:
+  push:
+    branches:
+      - tmp/ui-hardening-residual-qualification
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Run residual hardening E2E specs
+        run: npx playwright test e2e/level3-hardening.spec.ts e2e/phase35d-webmcp-coactivity.spec.ts --reporter=line
