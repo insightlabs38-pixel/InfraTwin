@@ -214,6 +214,68 @@ test('M3.5D H/I/J: proposal/violation capabilities dynamically follow current en
   for (const signal of host.signals.values()) assert.equal(signal?.aborted, true);
 });
 
+test('M3.5D registration refresh is race-safe when engineering state exposes new native tools', async () => {
+  const h = makeHarness();
+  const tools = new Map<string, WebMCPTool>();
+  const context: ModelContextLike = {
+    async registerTool(tool, options) {
+      if (tools.has(tool.name)) {
+        const error = new Error('Duplicate tool name');
+        error.name = 'InvalidStateError';
+        throw error;
+      }
+      tools.set(tool.name, tool);
+      options?.signal?.addEventListener('abort', () => tools.delete(tool.name), { once: true });
+      await Promise.resolve();
+    },
+  };
+  const registration = await registerCollaborativeTools(context, h.service);
+  await addFailingHumanOutage(h);
+  await Promise.all([registration.refresh(), registration.refresh(), registration.refresh()]);
+  for (const name of [...VIOLATION_TOOL_NAMES, ...MITIGATION_TOOL_NAMES]) assert.ok(tools.has(name), `${name} should be registered exactly once`);
+  registration.dispose();
+  assert.equal(tools.size, 0);
+});
+
+test('M3.5D registration abort revokes partial initial registration before a replacement mount starts', async () => {
+  const h = makeHarness();
+  const tools = new Map<string, WebMCPTool>();
+  let releaseFirst!: () => void;
+  let signalStarted!: () => void;
+  const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  const firstStarted = new Promise<void>((resolve) => { signalStarted = resolve; });
+  let gateOpen = true;
+  const context: ModelContextLike = {
+    async registerTool(tool, options) {
+      if (tools.has(tool.name)) {
+        const error = new Error('Duplicate tool name');
+        error.name = 'InvalidStateError';
+        throw error;
+      }
+      tools.set(tool.name, tool);
+      options?.signal?.addEventListener('abort', () => tools.delete(tool.name), { once: true });
+      if (gateOpen) {
+        gateOpen = false;
+        signalStarted();
+        await firstGate;
+      }
+    },
+  };
+  const controller = new AbortController();
+  const abandonedPromise = registerCollaborativeTools(context, h.service, { signal: controller.signal });
+  await firstStarted;
+  controller.abort();
+  assert.equal(tools.size, 0, 'aborting the owning mount must synchronously revoke partial registrations');
+  releaseFirst();
+  const abandoned = await abandonedPromise;
+  assert.deepEqual(abandoned.getRegisteredNames(), []);
+
+  const replacement = await registerCollaborativeTools(context, h.service);
+  for (const name of CORE_TOOL_NAMES) assert.ok(tools.has(name));
+  replacement.dispose();
+  assert.equal(tools.size, 0);
+});
+
 test('M3.5D K: verification is immediately stale after human semantic edit', async () => {
   const h = makeHarness();
   const verified = await h.service.verifyPlan(undefined, 'agent');

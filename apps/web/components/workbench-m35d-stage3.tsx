@@ -69,16 +69,18 @@ export function useWorkbenchStage3(scope: any) {
     const context = (document as Document & { modelContext?: ModelContextLike }).modelContext;
     if (!context?.registerTool) { setWebmcpStatus('unsupported'); setRegisteredTools([]); return; }
     let active = true;
+    const registrationController = new AbortController();
     delete (window as Window & { __infratwinWebMCPRegistrationError?: string }).__infratwinWebMCPRegistrationError;
     const register = async () => {
-      // React Strict Mode mounts, cleans up, and remounts effects in development. Yield once so
-      // the abandoned first effect cannot overlap native registerTool calls with the live mount.
+      // Avoid native registration work for an immediately abandoned Strict Mode mount. The
+      // registration-level AbortSignal also revokes any partial/in-flight tool registration.
       await Promise.resolve();
       if (!active) return;
       try {
         const registration = await registerCollaborativeTools(context, workspaceService, {
           onActivity: (event: ToolActivityEvent) => setActivity((current: ToolActivityEvent[]) => [event, ...current].slice(0, 40)),
           onToolSetChanged: (names: string[]) => setRegisteredTools(names),
+          signal: registrationController.signal,
         });
         if (!active) registration.dispose();
         else {
@@ -95,7 +97,7 @@ export function useWorkbenchStage3(scope: any) {
       }
     };
     void register();
-    return () => { active = false; webmcpRegistrationRef.current?.dispose(); webmcpRegistrationRef.current = null; };
+    return () => { active = false; registrationController.abort(); webmcpRegistrationRef.current?.dispose(); webmcpRegistrationRef.current = null; };
   }, [workspaceService]);
   useEffect(() => { void webmcpRegistrationRef.current?.refresh(); }, [currentPlanHash, plan.proposals, analysisFresh, publishedPlanAnalysis?.verdict, optimizerStatus, workspaceService]);
   const runWorkspaceAction = (fn: () => void) => { try { fn(); setImportMessage(''); } catch (error) { setImportMessage(error instanceof Error ? error.message : 'Change Plan action failed.'); } };

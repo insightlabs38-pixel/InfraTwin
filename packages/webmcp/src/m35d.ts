@@ -14,7 +14,7 @@ export interface ModelContextLike {
   addEventListener?(type:'toolchange',listener:(event:Event)=>void):void;
   removeEventListener?(type:'toolchange',listener:(event:Event)=>void):void;
 }
-export interface WebMCPRegistrationOptions { onActivity?(event:ToolActivityEvent):void; onToolSetChanged?(names:string[]):void }
+export interface WebMCPRegistrationOptions { onActivity?(event:ToolActivityEvent):void; onToolSetChanged?(names:string[]):void; signal?:AbortSignal }
 export interface WebMCPRegistration { refresh():Promise<string[]>; dispose():void; getRegisteredNames():string[] }
 
 export const CORE_TOOL_NAMES = ['inspect_workspace','inspect_selection','inspect_plan','inspect_analysis','simulate_change','add_plan_change','remove_plan_change','set_plan_constraints','set_plan_restriction','analyze_plan','run_contingencies','verify_plan'] as const;
@@ -69,12 +69,15 @@ function buildTools(service:CollaborativeWorkspaceService,options:WebMCPRegistra
 function parsePlanChangeInput(i:Record<string,unknown>):PlanChangeInput {const type=asString(i.type,'type'),target=asSelectionTarget(i.target);if(type==='disable_link'||type==='enable_link')return {type,linkId:asOptionalString(i.linkId,'linkId'),target};if(type==='disable_node'||type==='enable_node')return {type,nodeId:asOptionalString(i.nodeId,'nodeId'),target};if(type==='set_link_capacity')return {type,linkId:asOptionalString(i.linkId,'linkId'),target,capacityGbps:inRange(asNumber(i.capacityGbps,'capacityGbps'),'capacityGbps',Number.MIN_VALUE)};if(type==='set_demand_bandwidth')return {type,demandId:asOptionalString(i.demandId,'demandId'),target,bandwidthGbps:inRange(asNumber(i.bandwidthGbps,'bandwidthGbps'),'bandwidthGbps',0)};if(type==='demand_growth')return {type,demandIds:i.demandIds===undefined?undefined:asStringArray(i.demandIds,'demandIds'),target,multiplier:inRange(asNumber(i.multiplier,'multiplier'),'multiplier',0)};if(type==='add_demand'){if(!i.demand||typeof i.demand!=='object'||Array.isArray(i.demand))throw new Error('demand object is required.');return {type,demand:i.demand as never};}throw new Error(`Unsupported change type ${type}`);}
 
 export async function registerCollaborativeTools(context:ModelContextLike,service:CollaborativeWorkspaceService,options:WebMCPRegistrationOptions={}):Promise<WebMCPRegistration>{
-  const registrations=new Map<string,AbortController>();let disposed=false;let tools:Map<string,WebMCPTool>;
+  const registrations=new Map<string,AbortController>();let disposed=options.signal?.aborted??false;let tools:Map<string,WebMCPTool>;
   const desired=()=>{const state=service.capabilityState();const names=new Set<string>(CORE_TOOL_NAMES);if(state.hasViolation)for(const n of VIOLATION_TOOL_NAMES)names.add(n);if(state.canProposeMitigation)for(const n of MITIGATION_TOOL_NAMES)names.add(n);if(state.canCompareMitigationVariants)for(const n of DESIGN_TOOL_NAMES)names.add(n);if(state.canDecideProposal)for(const n of PROPOSAL_TOOL_NAMES)names.add(n);return names;};
-  const refresh=async()=>{if(disposed)return;const want=desired();for(const [name,c] of [...registrations])if(!want.has(name)){c.abort();registrations.delete(name);}for(const name of want)if(!registrations.has(name)){const tool=tools.get(name);if(!tool)continue;const c=new AbortController();await context.registerTool(tool,{signal:c.signal});if(disposed)c.abort();else registrations.set(name,c);}options.onToolSetChanged?.([...registrations.keys()].sort());};
+  const publishNames=()=>options.onToolSetChanged?.([...registrations.keys()].sort());
+  const dispose=()=>{const notify=!disposed||registrations.size>0;disposed=true;for(const c of registrations.values())c.abort();registrations.clear();options.signal?.removeEventListener('abort',dispose);if(notify)options.onToolSetChanged?.([]);};
+  const refresh=async()=>{if(disposed)return;const want=desired();for(const [name,c] of [...registrations])if(!want.has(name)){c.abort();registrations.delete(name);}for(const name of want){if(disposed)break;if(registrations.has(name))continue;const tool=tools.get(name);if(!tool)continue;const c=new AbortController();registrations.set(name,c);try{await context.registerTool(tool,{signal:c.signal});if(disposed||options.signal?.aborted){c.abort();registrations.delete(name);break;}}catch(error){c.abort();registrations.delete(name);throw error;}}publishNames();};
   tools=buildTools(service,options,refresh);
-  await refresh();
-  return {refresh:async()=>{await refresh();return [...registrations.keys()].sort();},dispose:()=>{disposed=true;for(const c of registrations.values())c.abort();registrations.clear();options.onToolSetChanged?.([]);},getRegisteredNames:()=>[...registrations.keys()].sort()};
+  options.signal?.addEventListener('abort',dispose,{once:true});
+  try{await refresh();}catch(error){dispose();throw error;}
+  return {refresh:async()=>{await refresh();return [...registrations.keys()].sort();},dispose,getRegisteredNames:()=>[...registrations.keys()].sort()};
 }
 
 /** Compatibility helper for low-level tests; registers the complete current state and returns one disposer. */
