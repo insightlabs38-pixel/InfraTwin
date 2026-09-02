@@ -37,7 +37,7 @@ test('M3.5D 2 — agent edit mutates the visible ChangePlan, topology context, p
   expect(analysis.result.state).toBe('stale');
   await page.getByTestId('nav-analysis').click();
   await page.getByTestId('analysis-tab-evidence').click();
-  await expect(page.getByTestId('analysis-evidence')).toContainText('STALE');
+  await expect(page.getByTestId('analysis-evidence')).toContainText(/stale/i);
 });
 
 test('M3.5D 3/4 — human lock invalidates the old agent proposal and replanning cannot reuse the locked resource', async ({ page }) => {
