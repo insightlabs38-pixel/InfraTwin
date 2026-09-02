@@ -166,7 +166,7 @@ sceneTest(6, 'deterministic analysis discovers the remote failure', async ({ pag
   expect(analysis.verdict).toBe('FAIL');
   await expect(page.getByTestId('verdict')).toHaveText('FAIL');
   await expect(page.getByTestId('evidence-panel')).toContainText(/BB-SE-CE-01|Southeast|Central/i);
-  await pauseForViewer(5_000);
+  await pauseForViewer(5_750);
   await capture.finish({ verdict: analysis.verdict });
 });
 
@@ -242,7 +242,7 @@ sceneTest(9, 'human locks the proposed modification target', async ({ page }, te
   await pauseForViewer(1_200);
   await page.getByTestId(`lock-link-${proposalLinkId}`).check();
   await expect(page.getByTestId('plan-restrictions')).toContainText(/1 modification lock/i);
-  await pauseForViewer(4_800);
+  await pauseForViewer(5_550);
   await capture.finish({ lockedLinkId: proposalLinkId });
 });
 
@@ -266,7 +266,7 @@ sceneTest(10, 'the previous proposal becomes stale immediately', async ({ page }
   await page.getByTestId(`lock-link-${proposalLinkId}`).check();
   await expect(page.getByTestId('candidate-proposals')).toContainText(/Stale · needs replanning/i);
   await expect(page.getByTestId('workflow-guidance')).toContainText(/analyze again/i);
-  await pauseForViewer(5_000);
+  await pauseForViewer(6_000);
   await capture.finish({ staleProposalTarget: proposalLinkId });
 });
 
