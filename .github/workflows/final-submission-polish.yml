@@ -23,6 +23,7 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
+          helper = Path('.github/workflows/final-submission-polish.yml')
           replacements = [
               (
                   Path('README.md'),
@@ -49,14 +50,16 @@ jobs:
               path.write_text(text.replace(old, new, 1), encoding='utf-8')
               print(f'updated {path}')
 
-          # Guard the URL migration and make sure no old deployment link survives.
-          repo_text = '\n'.join(
-              p.read_text(encoding='utf-8', errors='ignore')
-              for p in Path('.').rglob('*')
-              if p.is_file() and '.git' not in p.parts and p.stat().st_size < 2_000_000
-          )
-          if 'infra-twin-web-pi.vercel.app' in repo_text:
-              raise SystemExit('old Vercel URL still present after replacement')
+          # Guard the URL migration while excluding this temporary workflow,
+          # which necessarily contains the old URL as the replacement target.
+          stale_paths = []
+          for p in Path('.').rglob('*'):
+              if not p.is_file() or '.git' in p.parts or p == helper or p.stat().st_size >= 2_000_000:
+                  continue
+              if 'infra-twin-web-pi.vercel.app' in p.read_text(encoding='utf-8', errors='ignore'):
+                  stale_paths.append(str(p))
+          if stale_paths:
+              raise SystemExit(f'old Vercel URL still present in: {stale_paths}')
           PY
       - run: npm ci
       - run: npm test
