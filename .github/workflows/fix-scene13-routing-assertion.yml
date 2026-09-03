@@ -1,0 +1,38 @@
+name: Fix scene 13 routing evidence assertion
+
+on:
+  push:
+    branches: [demo-winning-level-capture]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: demo-winning-level-capture
+          fetch-depth: 0
+      - name: Scope routing assertion to full Evidence section
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('e2e/demo/demo-scenes.spec.ts')
+          text = p.read_text()
+          old = "await expect(page.getByTestId('adaptive-design-evidence')).toContainText(/[1-9]\\d* adaptive routing allocations? changed/i);"
+          new = "await expect(page.getByTestId('analysis-evidence')).toContainText(/[1-9]\\d* adaptive routing allocations? changed/i);"
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exactly one scene-13 assertion, found {text.count(old)}')
+          p.write_text(text.replace(old, new, 1))
+          PY
+      - name: Commit capture assertion fix and remove helper
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add e2e/demo/demo-scenes.spec.ts
+          git rm .github/workflows/fix-scene13-routing-assertion.yml
+          git commit -m 'test: assert routing cause in full evidence view'
+          git push origin HEAD:demo-winning-level-capture
