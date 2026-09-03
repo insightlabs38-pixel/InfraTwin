@@ -16,7 +16,7 @@ jobs:
         with:
           ref: demo-winning-level-capture
           fetch-depth: 0
-      - name: Guard non-current evidence and update provenance
+      - name: Guard non-current evidence
         shell: python
         run: |
           from pathlib import Path
@@ -41,22 +41,12 @@ jobs:
               else:
                   assert new in text
           path.write_text(text, encoding='utf-8')
-
-          workflow = Path('.github/workflows/demo-scenes.yml')
-          wf = workflow.read_text(encoding='utf-8')
-          old = "PRODUCT_BASE_SHA: '9aa939a4cec5774f2fb0d95cbd2905ac653e480e'"
-          new = "PRODUCT_BASE_SHA: '7c40ae885000d1d8751432e7a93ee1ad409082dc'"
-          if old in wf:
-              wf = wf.replace(old, new, 1)
-          else:
-              assert new in wf
-          workflow.write_text(wf, encoding='utf-8')
       - name: Remove one-shot workflow and commit
         shell: bash
         run: |
           rm .github/workflows/apply-evidence-guard-and-recapture.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/web/components/workbench-m35d-stage6.tsx .github/workflows/demo-scenes.yml .github/workflows/apply-evidence-guard-and-recapture.yml
+          git add apps/web/components/workbench-m35d-stage6.tsx .github/workflows/apply-evidence-guard-and-recapture.yml
           git commit -m "fix: hide stale evidence before demo analysis"
           git push origin HEAD:demo-winning-level-capture
