@@ -298,6 +298,7 @@ sceneTest(11, 'agent re-inspects the lock and adaptively replans', async ({ page
   expect(second.mode).toBe('adaptive-design');
   expect(second.verification).toBe('verified');
   await expect(page.getByTestId('network-design-summary')).toContainText(/VERIFIED/i, { timeout: 60_000 });
+  await expect(page.getByTestId('network-design-summary')).toContainText(/[1-9]\d* adaptive routing allocations? changed/i);
   await pauseForViewer(5_000);
   await capture.finish({ lockedModificationTarget: proposalLinkId, replanMode: second.mode, replanVerification: second.verification });
 });
@@ -346,6 +347,7 @@ sceneTest(13, 'verification evidence detail', async ({ page }, testInfo) => {
   await moveAndClick(page, page.getByTestId('nav-analysis'));
   await moveAndClick(page, page.getByTestId('analysis-tab-evidence'));
   await expect(page.getByTestId('adaptive-design-evidence')).toContainText('VERIFIED');
+  await expect(page.getByTestId('adaptive-design-evidence')).toContainText(/[1-9]\d* adaptive routing allocations? changed/i);
   await expect(page.getByTestId('adaptive-design-evidence')).toContainText(/Independent verification passed/i);
   await expect(page.getByTestId('adaptive-design-evidence')).toContainText(/Verified does not mean applied/i);
   await pauseForViewer(6_000);
