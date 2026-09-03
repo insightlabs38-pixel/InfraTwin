@@ -101,7 +101,7 @@ export function useWorkbenchStage2(scope: any) {
   const proposalNodeIds = useMemo(() => new Set(plan.proposals.filter((item:any) => item.state === 'pending' && item.change.target.kind === 'node').map((item:any) => item.change.target.kind === 'node' ? item.change.target.id : '')), [plan.proposals]);
   const lockedLinkIds = useMemo(() => new Set(plan.restrictions.lockedLinkIds), [plan.restrictions.lockedLinkIds]);
   const lockedNodeIds = useMemo(() => new Set(plan.restrictions.lockedNodeIds), [plan.restrictions.lockedNodeIds]);
-  const violationLinkIds = useMemo(() => new Set(analysis.result.violations.map((item:any) => item.linkId).filter((id:any): id is string => Boolean(id))), [analysis.result.violations]);
+  const violationLinkIds = useMemo(() => new Set((Boolean(ephemeralPatch) || (analysisAuthoritative && analysisFresh) ? analysis.result.violations : []).map((item:any) => item.linkId).filter((id:any): id is string => Boolean(id))), [analysis.result.violations, analysisAuthoritative, analysisFresh, ephemeralPatch]);
   const visibleViolationCount = violationDisplay.resultId === analysis.result.id ? violationDisplay.count : VIOLATION_RENDER_BATCH_SIZE;
   const visibleViolations = useMemo(() => analysis.result.violations.slice(0, visibleViolationCount), [analysis.result.violations, visibleViolationCount]);
   const selectedLinkIds = useMemo(() => {
