@@ -1,0 +1,41 @@
+name: Extend hero capture margin
+
+on:
+  push:
+    branches:
+      - demo-winning-level-capture
+
+permissions:
+  contents: write
+
+jobs:
+  apply-margin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: demo-winning-level-capture
+          fetch-depth: 0
+      - name: Extend scene 01 final hold
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('e2e/demo/demo-scenes.spec.ts')
+          text = path.read_text(encoding='utf-8')
+          old = "  await pauseForViewer(6_200);"
+          new = "  await pauseForViewer(8_000);"
+          if old in text:
+              assert text.count(old) == 1, f'expected one hero hold, got {text.count(old)}'
+              text = text.replace(old, new, 1)
+          else:
+              assert new in text
+          path.write_text(text, encoding='utf-8')
+      - name: Remove one-shot workflow and commit
+        shell: bash
+        run: |
+          rm .github/workflows/extend-hero-capture-margin.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add e2e/demo/demo-scenes.spec.ts .github/workflows/extend-hero-capture-margin.yml
+          git commit -m "test: add final hero capture margin"
+          git push origin HEAD:demo-winning-level-capture
