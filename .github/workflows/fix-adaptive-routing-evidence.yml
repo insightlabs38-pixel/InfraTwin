@@ -1,0 +1,90 @@
+name: Fix adaptive routing evidence
+
+on:
+  push:
+    branches: [ui-winning-level-hardening]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ui-winning-level-hardening
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Apply truthful adaptive-routing evidence summary
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          optimizer = Path('packages/optimizer/src/level4-design.ts')
+          text = optimizer.read_text()
+          import_anchor = "import { applyScenario, modelHash, scenarioHash } from '../../model/src/index.ts';\n"
+          route_import = "import { routeProject } from '../../graph-engine/src/index.ts';\n"
+          if route_import not in text:
+              if import_anchor not in text:
+                  raise SystemExit('optimizer import anchor missing')
+              text = text.replace(import_anchor, import_anchor + route_import, 1)
+          old = "const verification=verifyAdaptiveDesign(project,provisional,input),peak=verification.calculatedPeakUtilizationPct??0,summary:AdaptiveDesignEvidence['routingAllocationSummary']=[];for(const sc of scenarios){const snap=applyScenario(project,sc.patch);for(const d of snap.demands){const rows=allocations.filter(a=>a.scenarioHash===sc.hash&&a.demandId===d.id);if(!rows.length)continue;const pathById=new Map((pathSet.pathsByScenarioDemand[`${sc.hash}:${d.id}`]??[]).map(p=>[p.id,p]));if(rows.length===1&&Math.abs(rows[0].flowGbps-d.bandwidthGbps)<=1e-6)continue;summary.push({demandId:d.id,scenarioId:sc.id,allocations:rows.map(row=>({pathId:row.pathId,fraction:d.bandwidthGbps>0?round(row.flowGbps/d.bandwidthGbps):0,linkIds:pathById.get(row.pathId)?.linkIds??[]}))})}}"
+          new = "const verification=verifyAdaptiveDesign(project,provisional,input),peak=verification.calculatedPeakUtilizationPct??0,summary:AdaptiveDesignEvidence['routingAllocationSummary']=[];for(const sc of scenarios){const snap=applyScenario(project,sc.patch),currentRouteByDemand=new Map(routeProject(snap).routes.map(route=>[route.demandId,route]));for(const d of snap.demands){const rows=allocations.filter(a=>a.scenarioHash===sc.hash&&a.demandId===d.id);if(!rows.length)continue;const pathById=new Map((pathSet.pathsByScenarioDemand[`${sc.hash}:${d.id}`]??[]).map(p=>[p.id,p])),proposedFractions=new Map<string,number>();for(const row of rows){const fraction=d.bandwidthGbps>0?row.flowGbps/d.bandwidthGbps:0;for(const linkId of pathById.get(row.pathId)?.linkIds??[])proposedFractions.set(linkId,(proposedFractions.get(linkId)??0)+fraction)}const currentFractions=currentRouteByDemand.get(d.id)?.linkFractions??{},comparedLinkIds=new Set([...Object.keys(currentFractions),...proposedFractions.keys()]),routingChanged=[...comparedLinkIds].some(linkId=>Math.abs((currentFractions[linkId]??0)-(proposedFractions.get(linkId)??0))>1e-6);if(!routingChanged)continue;summary.push({demandId:d.id,scenarioId:sc.id,allocations:rows.map(row=>({pathId:row.pathId,fraction:d.bandwidthGbps>0?round(row.flowGbps/d.bandwidthGbps):0,linkIds:pathById.get(row.pathId)?.linkIds??[]}))})}}"
+          if old not in text:
+              raise SystemExit('optimizer summary anchor missing')
+          optimizer.write_text(text.replace(old, new, 1))
+
+          stage6 = Path('apps/web/components/workbench-m35d-stage6.tsx')
+          text = stage6.read_text()
+          old = "<small>{selectedDesignVariant.selectedUpgrades.length?`${selectedDesignVariant.selectedUpgrades.length} capacity upgrade${selectedDesignVariant.selectedUpgrades.length===1?'':'s'}`:'No capacity upgrades'} · {selectedDesignVariant.evidence.routingAllocationSummary.length} routing change{selectedDesignVariant.evidence.routingAllocationSummary.length===1?'':'s'}</small>"
+          new = "<small>{selectedDesignVariant.evidence.routingAllocationSummary.length?`${selectedDesignVariant.evidence.routingAllocationSummary.length} adaptive routing allocation${selectedDesignVariant.evidence.routingAllocationSummary.length===1?'':'s'} changed`:'No adaptive routing changes'} · {selectedDesignVariant.selectedUpgrades.length?`${selectedDesignVariant.selectedUpgrades.length} capacity upgrade${selectedDesignVariant.selectedUpgrades.length===1?'':'s'}`:'No capacity upgrades'} · {selectedDesignVariant.selectedNewLinks.length?`${selectedDesignVariant.selectedNewLinks.length} new link${selectedDesignVariant.selectedNewLinks.length===1?'':'s'}`:'No new links'}</small>"
+          if old not in text:
+              raise SystemExit('stage6 summary anchor missing')
+          stage6.write_text(text.replace(old, new, 1))
+
+          analysis = Path('apps/web/components/workbench-m35d-analysis-view.tsx')
+          text = analysis.read_text()
+          old = "<h3>Design changes</h3><p>{selectedDesignVariant.selectedUpgrades.length ? `${selectedDesignVariant.selectedUpgrades.length} capacity upgrade${selectedDesignVariant.selectedUpgrades.length===1?'':'s'}` : 'No capacity upgrades'} · {selectedDesignVariant.selectedNewLinks.length ? `${selectedDesignVariant.selectedNewLinks.length} declared new link${selectedDesignVariant.selectedNewLinks.length===1?'':'s'}` : 'No new links'} · {selectedDesignVariant.evidence.routingAllocationSummary.length} routing allocation change{selectedDesignVariant.evidence.routingAllocationSummary.length===1?'':'s'}.</p>"
+          new = "<h3>Design actions</h3><p>{selectedDesignVariant.evidence.routingAllocationSummary.length ? `${selectedDesignVariant.evidence.routingAllocationSummary.length} adaptive routing allocation${selectedDesignVariant.evidence.routingAllocationSummary.length===1?'':'s'} changed` : 'No adaptive routing changes'} · {selectedDesignVariant.selectedUpgrades.length ? `${selectedDesignVariant.selectedUpgrades.length} capacity upgrade${selectedDesignVariant.selectedUpgrades.length===1?'':'s'}` : 'No capacity upgrades'} · {selectedDesignVariant.selectedNewLinks.length ? `${selectedDesignVariant.selectedNewLinks.length} declared new link${selectedDesignVariant.selectedNewLinks.length===1?'':'s'}` : 'No new links'}.</p>"
+          if old not in text:
+              raise SystemExit('analysis evidence anchor missing')
+          analysis.write_text(text.replace(old, new, 1))
+
+          plans = Path('apps/web/components/workbench-m35d-plans-view.tsx')
+          text = plans.read_text()
+          old = "{countLabel(variant.selectedUpgrades.length,'upgrade')} · {countLabel(variant.selectedNewLinks.length,'new link')} · {countLabel(routingCount,'routing change')}"
+          new = "{countLabel(routingCount,'adaptive routing change')} · {countLabel(variant.selectedUpgrades.length,'upgrade')} · {countLabel(variant.selectedNewLinks.length,'new link')}"
+          if old not in text:
+              raise SystemExit('plans routing count anchor missing')
+          plans.write_text(text.replace(old, new, 1))
+
+          tests = Path('tests/level4a-adaptive-design.test.ts')
+          text = tests.read_text()
+          marker = "test('Level 4A preserves the legacy capacity-only optimum X cost 5'"
+          if "single-path adaptive reroute is reported as a routing change" not in text:
+              insert = """function singlePathRerouteProject(): NetworkProject { return { schemaVersion:'0.1',id:'l4a-single-path-reroute',name:'Single-path reroute evidence',nodes:['A','B','C','D'].map(id=>({id,name:id})),links:[{id:'AB',source:'A',target:'B',capacityGbps:8,weight:1,bidirectional:true},{id:'BD',source:'B',target:'D',capacityGbps:8,weight:1,bidirectional:true},{id:'AC',source:'A',target:'C',capacityGbps:20,weight:2,bidirectional:true},{id:'CD',source:'C',target:'D',capacityGbps:20,weight:2,bidirectional:true}],demands:[{id:'D1',source:'A',target:'D',bandwidthGbps:10,serviceClassId:'gold'}],serviceClasses:[{id:'gold',name:'Gold',priority:100,maxUtilizationPct:80,allowShedding:false}],routingProfile:{mode:'single-shortest-path'} }; }\ntest('single-path adaptive reroute is reported as a routing change',async()=>{const result=await optimizeAdaptiveDesign(singlePathRerouteProject(),{targetUtilizationPct:80,allowedActions:{capacityUpgrades:false,routingChanges:true,newLinks:false},maxCandidatePaths:5},{timeLimitMs:5000});assert.equal(result.variant?.verification.status,'verified');assert.equal(result.variant?.totalCost,0);assert.deepEqual(result.variant?.selectedUpgrades,[]);assert.deepEqual(result.variant?.selectedNewLinks,[]);assert.equal(result.variant?.evidence.routingAllocationSummary.length,1);assert.equal(result.variant?.evidence.routingAllocationSummary[0]?.demandId,'D1');assert.deepEqual(result.variant?.evidence.routingAllocationSummary[0]?.allocations[0]?.linkIds,['AC','CD']);assert.ok((result.variant?.peakUtilizationPct??Infinity)<=80+1e-6);});\n"""
+              pos = text.find(marker)
+              if pos < 0:
+                  raise SystemExit('test insertion anchor missing')
+              text = text[:pos] + insert + text[pos:]
+              tests.write_text(text)
+          PY
+      - name: Verify product
+        run: |
+          npm test
+          npm run typecheck
+          npm run build
+      - name: Commit fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add packages/optimizer/src/level4-design.ts apps/web/components/workbench-m35d-stage6.tsx apps/web/components/workbench-m35d-analysis-view.tsx apps/web/components/workbench-m35d-plans-view.tsx tests/level4a-adaptive-design.test.ts
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix: report adaptive routing changes truthfully'
+          git push origin HEAD:ui-winning-level-hardening
