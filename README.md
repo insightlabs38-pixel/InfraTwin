@@ -4,7 +4,7 @@
 
 | **Live Demo** | **Demo Video** | **Source** |
 | --- | --- | --- |
-| [Open InfraTwin](https://infra-twin-web-pi.vercel.app) | **TODO before submission:** add final public YouTube URL | [GitHub repository](https://github.com/insightlabs38-pixel/InfraTwin) |
+| [Open InfraTwin](https://infra-twin-web-pi.vercel.app) | [Watch the final demo](https://vimeo.com/1223185421?share=copy&fl=sv&fe=ci#t=0) | [GitHub repository](https://github.com/insightlabs38-pixel/InfraTwin) |
 
 InfraTwin is a browser-native network change-planning workbench where engineers and WebMCP agents collaborate on the **same live, unsaved ChangePlan**. Humans provide intent, operational constraints, and approval; the agent explores and revises alternatives; deterministic routing, resilience analysis, optimization, and verification provide machine-checkable engineering evidence.
 
