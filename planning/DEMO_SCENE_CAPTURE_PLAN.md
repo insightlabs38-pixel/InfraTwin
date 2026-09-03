@@ -30,6 +30,7 @@ This capture package is intentionally modular. The final video should be edited 
 - Author scene holds with explicit margin above the validated minimum duration so trim/encoding variance cannot turn a good take into a boundary failure; scene 01 carries an extra final-state hold for the submission recapture.
 - Current deterministic evidence is shown only for a current PASS/FAIL analysis (or an explicit counterexample replay). A DRAFT/STALE plan must not visually inherit prior violation cards, analyzed load/utilization values, or stale topology violation highlighting.
 - Final visual QA must explicitly inspect the pre-analysis agent-growth state for a clean DRAFT presentation before using scene 05 in the submission edit.
+- Adaptive design evidence must state the modeled cause of an improvement: scenes 11 and 13 require a visible nonzero adaptive-routing allocation count when the verified proposal improves utilization without capacity or new-link actions.
 - Do not fabricate agent UI, product results, tool activity, engineering numbers, or optimizer state.
 - Do not accelerate compute in capture. Final editing may hard-cut irrelevant waiting, but may not imply a slower operation completed instantly.
 - Keep the product at normal 100% browser zoom.
