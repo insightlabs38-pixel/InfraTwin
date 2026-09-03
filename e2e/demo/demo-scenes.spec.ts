@@ -56,7 +56,7 @@ sceneTest(1, 'clean hero workspace', async ({ page }, testInfo) => {
   await expect(page.getByTestId('collaboration-indicator')).toContainText(/Shared ChangePlan/i);
   capture.markStart();
   await page.mouse.move(1510, 970, { steps: 16 });
-  await pauseForViewer(6_200);
+  await pauseForViewer(8_000);
   await capture.finish();
 });
 
