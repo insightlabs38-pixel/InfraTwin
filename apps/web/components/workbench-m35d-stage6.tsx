@@ -94,7 +94,7 @@ export function useWorkbenchStage6(scope: any) {
   const renderPlanResultSummary = () => (
     <section data-testid="plan-analysis-status" className={`plan-result-summary result-${authority.toLowerCase()}`} aria-label="Current plan result">
       <div data-testid="evidence-panel" className="result-evidence">
-        <div><span className="section-kicker">{ephemeralPatch ? 'Counterexample replay' : 'Plan result'}</span><strong data-testid="verdict">{ephemeralPatch ? analysis.result.verdict : authority}</strong></div>
+        <div><span className="section-kicker">{ephemeralPatch ? 'Counterexample replay' : 'Plan result'}</span>{' '}<strong data-testid="verdict">{ephemeralPatch ? analysis.result.verdict : authority}</strong></div>
         <p>{ephemeralPatch ? `${ephemeralPatch.name} · ${analysis.result.violations.length} modeled violation${analysis.result.violations.length === 1 ? '' : 's'}.` : analysisStatusLabel}</p>
         {ephemeralPatch && analysis.result.violations.length > 0 && <small>Replay issues: {analysis.result.violations.slice(0, 8).map((item:any) => item.linkId ?? item.demandId ?? item.message).filter(Boolean).join(', ')}</small>}
         {!ephemeralPatch && authority === 'FAIL' && primaryFailure && <small>Primary issue: {primaryFailure}</small>}
