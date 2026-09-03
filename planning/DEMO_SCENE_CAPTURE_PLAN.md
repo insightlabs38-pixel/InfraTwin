@@ -28,7 +28,7 @@ This capture package is intentionally modular. The final video should be edited 
 - Record setup before `markStart`; processed footage begins at the useful trim point.
 - Preserve roughly 1–2 seconds before the main visible action and 3–6 seconds after the useful end state.
 - Author scene holds with explicit margin above the validated minimum duration so trim/encoding variance cannot turn a good take into a boundary failure.
-- Current deterministic evidence is shown only for a current PASS/FAIL analysis (or an explicit counterexample replay). A DRAFT/STALE plan must not visually inherit prior violation cards or analyzed load/utilization values.
+- Current deterministic evidence is shown only for a current PASS/FAIL analysis (or an explicit counterexample replay). A DRAFT/STALE plan must not visually inherit prior violation cards, analyzed load/utilization values, or stale topology violation highlighting.
 - Do not fabricate agent UI, product results, tool activity, engineering numbers, or optimizer state.
 - Do not accelerate compute in capture. Final editing may hard-cut irrelevant waiting, but may not imply a slower operation completed instantly.
 - Keep the product at normal 100% browser zoom.
