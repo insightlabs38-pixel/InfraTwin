@@ -347,7 +347,7 @@ sceneTest(13, 'verification evidence detail', async ({ page }, testInfo) => {
   await moveAndClick(page, page.getByTestId('nav-analysis'));
   await moveAndClick(page, page.getByTestId('analysis-tab-evidence'));
   await expect(page.getByTestId('adaptive-design-evidence')).toContainText('VERIFIED');
-  await expect(page.getByTestId('adaptive-design-evidence')).toContainText(/[1-9]\d* adaptive routing allocations? changed/i);
+  await expect(page.getByTestId('analysis-evidence')).toContainText(/[1-9]\d* adaptive routing allocations? changed/i);
   await expect(page.getByTestId('adaptive-design-evidence')).toContainText(/Independent verification passed/i);
   await expect(page.getByTestId('adaptive-design-evidence')).toContainText(/Verified does not mean applied/i);
   await pauseForViewer(6_000);
