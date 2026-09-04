@@ -112,3 +112,5 @@ input,select{min-height:var(--control-h);border-color:var(--border-strong);backg
 .remove-row{min-height:30px;padding:4px 8px;font-size:10.5px}.candidate-link-editor .compact-form{grid-template-columns:1fr}
 @media(max-width:760px){.growth-filter-row{grid-template-columns:1fr}}
 .current-evidence-summary{display:grid;gap:3px;padding:8px 10px;border-left:3px solid var(--danger);background:rgba(238,124,136,.06);border-radius:0 var(--radius-sm) var(--radius-sm) 0}.current-evidence-summary small{font-size:10.5px;color:var(--text-secondary);line-height:1.4}
+/* Preserve the inspector's full workflow on standard laptop-height viewports by trimming whitespace only. */
+@media(max-height:800px) and (min-width:1025px){.inspector-pane{padding-block:10px}.inspector-header{padding-bottom:6px}.inspector-section{padding:9px 0}.compact-metrics>div{padding-block:5px}}
