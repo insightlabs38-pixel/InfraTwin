@@ -11,6 +11,15 @@ async function selectNetwork(page: import('@playwright/test').Page, id: string) 
   await expect(page.getByTestId('network-selector')).toHaveValue(id);
 }
 
+
+async function chooseSearchable(page: import('@playwright/test').Page, testId: string, value: string) {
+  const trigger = page.getByTestId(testId);
+  await trigger.click();
+  const control = trigger.locator('..');
+  await control.getByRole('combobox').fill(value);
+  await control.getByRole('option').filter({ hasText: value }).first().click();
+}
+
 async function waitOptimizer(page: import('@playwright/test').Page) {
   await expect(page.getByTestId('optimizer-status')).toContainText(/ready|HiGHS WASM/i, { timeout: 30_000 });
 }
@@ -40,7 +49,7 @@ test('Phase 3.5A: human maintenance plan is non-destructive and reversible in th
 test('Phase 3.5A: human-created selected-demand growth reproduces Growth Wall without a special runGrowth path', async ({ page }) => {
   await open(page);
   await selectNetwork(page, 'growth-wall');
-  await page.getByText('Traffic changes', { exact: true }).click();
+  await page.getByText('Planned traffic changes', { exact: true }).click();
   await page.getByText('Add demand growth', { exact: true }).click();
   await page.getByTestId('growth-all-demands').uncheck();
   await page.getByTestId('growth-demand-GD1').check();
@@ -72,6 +81,10 @@ test('Phase 3.5A: human restriction invalidates verified optimizer proposal and 
   await page.getByTestId('lock-link-R4').check();
   await expect(page.getByTestId('candidate-verification')).toContainText('STALE');
   await expect(page.getByTestId('proposal-R4')).toContainText(/stale/i);
+  await expect(page.getByTestId('run-optimizer')).toBeDisabled();
+  await expect(page.getByTestId('run-optimizer')).toHaveAttribute('title', /Analyze the current ChangePlan first/i);
+  await page.getByTestId('analyze-plan').click();
+  await expect(page.getByTestId('verdict')).toHaveText('FAIL');
   await page.getByTestId('run-optimizer').click();
   await expect(page.getByTestId('capacity-optimizer-result')).toContainText(/Infeasible/i, { timeout: 30_000 });
   await expect(page.getByTestId('optimizer-status')).toContainText(/locked/i);
@@ -81,11 +94,11 @@ test('Phase 3.5A: add a new service through UI and keep the base project unchang
   await open(page);
   await selectNetwork(page, 'growth-wall');
   const baseHash = await page.getByTestId('base-model-hash').textContent();
-  await page.getByText('Traffic changes', { exact: true }).click();
+  await page.getByText('Planned traffic changes', { exact: true }).click();
   await page.getByText('Add new service demand', { exact: true }).click();
   await page.getByTestId('new-demand-name').fill('Payments replication');
-  await page.getByTestId('new-demand-source').selectOption('NYC');
-  await page.getByTestId('new-demand-target').selectOption('SEA');
+  await chooseSearchable(page, 'new-demand-source', 'NYC');
+  await chooseSearchable(page, 'new-demand-target', 'SEA');
   await page.getByTestId('new-demand-bandwidth').fill('12');
   await page.getByTestId('new-demand-class').selectOption('gold');
   await page.getByTestId('add-new-demand').click();
@@ -113,7 +126,7 @@ test('Phase 3.5A: individual candidate accept/reject is visible, preserves prove
   await expect(page.getByTestId('candidate-verification')).toContainText('STALE');
   await page.getByTestId('proposal-R5').getByRole('button', { name: 'Reject' }).click();
   await expect(page.getByTestId('plan-change-list')).toContainText('Set R4 capacity to 14 Gbps');
-  await expect(page.getByTestId('plan-change-list')).toContainText('Agent/optimizer proposal accepted by human');
+  await expect(page.getByTestId('plan-change-list').locator('.actor-chip.agent')).toContainText('Agent · accepted by human');
   await expect(page.getByTestId('plan-change-list')).not.toContainText('Set R5 capacity to 14 Gbps');
   await page.getByTestId('nav-plans').click();
   await expect(page.getByTestId('plan-history')).toContainText('Optimizer proposed 2 changes');

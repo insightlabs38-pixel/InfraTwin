@@ -10,6 +10,15 @@ async function openFlagship(page: import('@playwright/test').Page) {
   await expect(page.getByTestId('network-scale')).toContainText('6');
 }
 
+
+async function chooseSearchable(page: import('@playwright/test').Page, testId: string, value: string) {
+  const trigger = page.getByTestId(testId);
+  await trigger.click();
+  const control = trigger.locator('..');
+  await control.getByRole('combobox').fill(value);
+  await control.getByRole('option').filter({ hasText: value }).first().click();
+}
+
 async function searchAndChoose(page: import('@playwright/test').Page, query: string, resultTestId: string) {
   await page.getByTestId('topology-search').fill(query);
   await page.getByTestId(resultTestId).click();
@@ -92,8 +101,8 @@ test('Phase 3.5B 5: upgrade catalog editor changes canonical design space explic
   await searchAndChoose(page, 'BB-SE-CE-01', 'search-result-link-BB-SE-CE-01');
   const before = await page.getByTestId('base-model-hash').textContent();
   await page.getByTestId('nav-settings').click();
-  await page.getByTestId('settings-upgrade-link').selectOption('BB-SE-CE-01');
-  await expect(page.getByTestId('upgrade-profile-editor')).toContainText(/not a Change Plan action/i);
+  await chooseSearchable(page, 'settings-upgrade-link', 'BB-SE-CE-01');
+  await expect(page.getByTestId('upgrade-profile-editor')).toContainText(/applies to future plans/i);
   await expect(page.getByTestId('upgrade-profile-editor')).toContainText(/cost units/i);
   await page.getByLabel('Upgrade capacity 1').fill('130');
   await page.getByLabel('Upgrade cost 1').fill('6');
@@ -103,7 +112,7 @@ test('Phase 3.5B 5: upgrade catalog editor changes canonical design space explic
   await page.getByLabel('Upgrade cost 3').fill('12');
   await page.getByTestId('apply-upgrade-profile').click();
   await expect(page.getByTestId('base-model-hash')).not.toHaveText(before ?? '');
-  await expect(page.getByRole('status').first()).toContainText(/canonical network-assumption edit/i);
+  await expect(page.getByRole('status').first()).toContainText(/base-network upgrade catalog/i);
   await expect(page.getByTestId('plan-change-list')).toContainText(/No planned changes/i);
 });
 
@@ -118,6 +127,7 @@ test('Phase 3.5B 6: presentation interactions do not stale analyzed evidence or 
   const planHash = await page.getByTestId('plan-hash').textContent();
   await page.getByTestId('topology-canvas').hover();
   await page.mouse.wheel(0, -350);
+  await page.locator('.region-filter summary').click();
   await page.getByTestId('region-filter-central').uncheck();
   await page.getByTestId('display-mode-change-plan').check();
   await page.getByTestId('relayout').click();

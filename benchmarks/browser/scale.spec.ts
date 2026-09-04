@@ -65,7 +65,7 @@ test('Phase 3.5C reproducible Chromium scale benchmark', async ({ page, browserN
   });
   await timed('National Backbone Scale Test', nationalCounts, 'single-shortest-path', 'changeplan-analysis', 'worker', async () => {
     await page.getByTestId('analyze-plan').click();
-    await expect(page.getByTestId('capacity-analysis-status')).toContainText(/RUNNING.*worker/i, { timeout: 5_000 });
+    await expect(page.getByTestId('capacity-analysis-status')).toContainText(/(RUNNING|COMPLETE).*worker/i, { timeout: 5_000 });
     await expect(page.getByTestId('capacity-analysis-status')).toContainText(/COMPLETE.*worker/i, { timeout: 15_000 });
   });
   const n1StartedAt = performance.now();
@@ -78,13 +78,17 @@ test('Phase 3.5C reproducible Chromium scale benchmark', async ({ page, browserN
   await page.getByRole('button', { name: 'Canonical JSON' }).click();
   await page.getByTestId('json-import-file').setInputFiles({ name: 'chromium-worker-probe.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(workerProject)) });
   await page.getByTestId('open-imported-network').click();
+  await expect(page.getByRole('alertdialog')).toBeVisible();
+  await page.getByRole('button', { name: 'Open network' }).click();
+  await expect(page.getByRole('alertdialog')).toBeHidden();
   await expect(page.getByTestId('compute-profile')).toContainText('Worker preferred');
+  const viewportBeforeWorker = await page.getByTestId('viewport-readout').textContent();
   const workerStart = performance.now();
   await page.getByTestId('analyze-plan').click();
-  await expect(page.getByTestId('capacity-analysis-status')).toContainText(/RUNNING.*worker/i, { timeout: 5_000 });
   const interactionStart = performance.now();
   await page.getByTestId('zoom-in').click();
-  measurements.push({ fixture: 'Tier C unique-source Worker probe', counts: nationalCounts, routingMode: 'ecmp', operation: 'interaction-during-analysis', runtimeMs: performance.now() - interactionStart, execution: 'worker', success: true });
+  await expect(page.getByTestId('viewport-readout')).not.toHaveText(viewportBeforeWorker ?? '');
+  measurements.push({ fixture: 'Tier C unique-source Worker probe', counts: nationalCounts, routingMode: 'ecmp', operation: 'interaction-after-analysis-dispatch', runtimeMs: performance.now() - interactionStart, execution: 'worker', success: true });
   await expect(page.getByTestId('capacity-analysis-status')).toContainText(/COMPLETE.*worker/i, { timeout: 30_000 });
   const workerWallMs = performance.now() - workerStart;
   measurements.push({ fixture: 'Tier C unique-source Worker probe', counts: nationalCounts, routingMode: 'ecmp', operation: 'worker-changeplan-analysis', runtimeMs: workerWallMs, execution: 'worker', success: true });

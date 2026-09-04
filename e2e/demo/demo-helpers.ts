@@ -71,7 +71,7 @@ export async function openProductionWorkspace(page: Page): Promise<void> {
 }
 
 export async function enableAdaptiveRouting(page: Page): Promise<void> {
-  const constraints = page.getByText('Constraints', { exact: true }).first();
+  const constraints = page.getByTestId('plan-constraints').locator('summary').first();
   await moveAndClick(page, constraints);
   const checkbox = page.getByTestId('allow-routing-changes');
   await expect(checkbox).toBeVisible();

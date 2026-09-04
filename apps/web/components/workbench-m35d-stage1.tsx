@@ -58,6 +58,8 @@ import { UpgradeProfileEditor } from './upgrade-profile-editor';
 import { ScenarioSelector } from './scenario-selector';
 import { TopologyCanvas } from './topology-canvas';
 import { ImportNetworkDialog } from './import-network-dialog';
+import type { ConfirmationRequest } from './confirmation-dialog';
+import { hasMeaningfulPlanWork, readLocalWorkspaceDraft, writeLocalWorkspaceDraft, type WorkspaceBundle } from '../lib/workspace-persistence';
 import { applyUpgradeProfile } from '../lib/upgrade-catalog';
 import {
   registerCollaborativeTools,
@@ -137,6 +139,9 @@ export function useWorkbenchStage1(scope: any) {
   const [newPlanName, setNewPlanName] = useState('Change Plan');
   const [inspectorCapacityDraft, setInspectorCapacityDraft] = useState<number | null>(null);
   const [violationDisplay, setViolationDisplay] = useState<{ resultId: string; count: number }>({ resultId: '', count: VIOLATION_RENDER_BATCH_SIZE });
+  const [recoveryDraft, setRecoveryDraft] = useState<WorkspaceBundle | null>(null);
+  const [draftPersistenceEnabled, setDraftPersistenceEnabled] = useState(false);
+  const [pendingConfirmation, setPendingConfirmation] = useState<ConfirmationRequest | null>(null);
   const directRunControllerRef = useRef<AbortController | null>(null);
   const analysisControllerRef = useRef<AbortController | null>(null);
   const optimizerControllerRef = useRef<AbortController | null>(null);
@@ -171,7 +176,27 @@ export function useWorkbenchStage1(scope: any) {
   selectedLinkRef.current = selectedLinkId;
   selectedNodeRef.current = selectedNodeId;
   selectedEvidenceRef.current = selectedEvidence;
-  useEffect(() => { setCompute(detectComputeCapabilities()); }, []);
+  useEffect(() => {
+    setCompute(detectComputeCapabilities());
+    const localDraft = readLocalWorkspaceDraft();
+    setRecoveryDraft(localDraft);
+    setDraftPersistenceEnabled(!localDraft);
+  }, []);
+  useEffect(() => {
+    if (!draftPersistenceEnabled) return;
+    writeLocalWorkspaceDraft(project, plan);
+  }, [project, plan, draftPersistenceEnabled]);
+  useEffect(() => {
+    if (!hasMeaningfulPlanWork(project, plan)) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [project, plan]);
+  useEffect(() => {
+    if (!collaborationNotice) return;
+    const timer = window.setTimeout(() => setCollaborationNotice(''), 3500);
+    return () => window.clearTimeout(timer);
+  }, [collaborationNotice]);
   useEffect(() => {
     const controller = new AbortController();
     probeBrowserOptimizer(controller.signal).then((probe) => { setOptimizerStatus('ready'); setOptimizerMessage(`${probe.solver} ${probe.solverVersion} · ${probe.status}`); }).catch((error) => { if (error instanceof Error && error.name === 'AbortError') return; setOptimizerStatus('error'); setOptimizerMessage(error instanceof Error ? error.message : 'HiGHS WASM failed to load.'); });
@@ -206,5 +231,5 @@ export function useWorkbenchStage1(scope: any) {
   const verificationFresh = Boolean(candidateVerification && candidateVerificationStamp && isPlanRevisionFresh(candidateVerificationStamp, project, plan));
   const pendingProposals = plan.proposals.filter((proposal) => proposal.state === 'pending');
   const candidateStale = pendingProposals.some((proposal) => proposal.sourcePlanHash !== currentPlanHash);
-  Object.assign(scope, { selectedScenarioId, setSelectedScenarioId, project, setProject, plan, setPlan, ephemeralPatch, setEphemeralPatch, publishedPlanAnalysis, setPublishedPlanAnalysis, candidate, setCandidate, comparison, setComparison, contingencies, setContingencies, contingencyStamp, setContingencyStamp, bottleneck, setBottleneck, selectedEvidence, setSelectedEvidence, selectedLinkId, setSelectedLinkId, selectedNodeId, setSelectedNodeId, activity, setActivity, webmcpStatus, setWebmcpStatus, registeredTools, setRegisteredTools, importMessage, setImportMessage, lastToolAnalysis, setLastToolAnalysis, compute, setCompute, progress, setProgress, resilienceStatus, setResilienceStatus, resilienceMessage, setResilienceMessage, analysisStatus, setAnalysisStatus, analysisMessage, setAnalysisMessage, lastAnalysisRuntimeMs, setLastAnalysisRuntimeMs, lastAnalysisExecution, setLastAnalysisExecution, optimizerStatus, setOptimizerStatus, optimizerMessage, setOptimizerMessage, optimizerResult, setOptimizerResult, routingOptimization, setRoutingOptimization, candidateVerification, setCandidateVerification, candidateVerificationStamp, setCandidateVerificationStamp, sharedVerification, setSharedVerification, designState, setDesignState, collaborationNotice, setCollaborationNotice, importDialogOpen, setImportDialogOpen, activeView, setActiveView, analysisTab, setAnalysisTab, leftPanelCollapsed, setLeftPanelCollapsed, rightPanelCollapsed, setRightPanelCollapsed, advancedOpen, setAdvancedOpen, trafficEditorOpen, setTrafficEditorOpen, settingsLinkId, setSettingsLinkId, newPlanName, setNewPlanName, inspectorCapacityDraft, setInspectorCapacityDraft, violationDisplay, setViolationDisplay, directRunControllerRef, analysisControllerRef, optimizerControllerRef, webmcpRegistrationRef, analysisEpochRef, planCounterRef, changeCounterRef, demandCounterRef, projectRef, planRef, ephemeralRef, candidateRef, contingencyRef, contingencyStampRef, analysisRef, verificationRef, designStateRef, destinationRef, selectedLinkRef, selectedNodeRef, selectedEvidenceRef, definition, compiledPlanPatch, solverPatch, executionProfile, semanticFingerprint, currentProjectHash, currentPlanHash, analysisFresh, syncLivePlanAnalysis, displayedPlanAnalysis, pendingAnalysis, analysis, analysisAuthoritative, snapshot, routeByDemand, selectedCanonicalLink, selectedCanonicalNode, selectedDemandId, selectedCanonicalDemand, n1Fresh, verificationFresh, pendingProposals, candidateStale });
+  Object.assign(scope, { selectedScenarioId, setSelectedScenarioId, project, setProject, plan, setPlan, ephemeralPatch, setEphemeralPatch, publishedPlanAnalysis, setPublishedPlanAnalysis, candidate, setCandidate, comparison, setComparison, contingencies, setContingencies, contingencyStamp, setContingencyStamp, bottleneck, setBottleneck, selectedEvidence, setSelectedEvidence, selectedLinkId, setSelectedLinkId, selectedNodeId, setSelectedNodeId, activity, setActivity, webmcpStatus, setWebmcpStatus, registeredTools, setRegisteredTools, importMessage, setImportMessage, lastToolAnalysis, setLastToolAnalysis, compute, setCompute, progress, setProgress, resilienceStatus, setResilienceStatus, resilienceMessage, setResilienceMessage, analysisStatus, setAnalysisStatus, analysisMessage, setAnalysisMessage, lastAnalysisRuntimeMs, setLastAnalysisRuntimeMs, lastAnalysisExecution, setLastAnalysisExecution, optimizerStatus, setOptimizerStatus, optimizerMessage, setOptimizerMessage, optimizerResult, setOptimizerResult, routingOptimization, setRoutingOptimization, candidateVerification, setCandidateVerification, candidateVerificationStamp, setCandidateVerificationStamp, sharedVerification, setSharedVerification, designState, setDesignState, collaborationNotice, setCollaborationNotice, importDialogOpen, setImportDialogOpen, activeView, setActiveView, analysisTab, setAnalysisTab, leftPanelCollapsed, setLeftPanelCollapsed, rightPanelCollapsed, setRightPanelCollapsed, advancedOpen, setAdvancedOpen, trafficEditorOpen, setTrafficEditorOpen, settingsLinkId, setSettingsLinkId, newPlanName, setNewPlanName, inspectorCapacityDraft, setInspectorCapacityDraft, violationDisplay, setViolationDisplay, recoveryDraft, setRecoveryDraft, draftPersistenceEnabled, setDraftPersistenceEnabled, pendingConfirmation, setPendingConfirmation, directRunControllerRef, analysisControllerRef, optimizerControllerRef, webmcpRegistrationRef, analysisEpochRef, planCounterRef, changeCounterRef, demandCounterRef, projectRef, planRef, ephemeralRef, candidateRef, contingencyRef, contingencyStampRef, analysisRef, verificationRef, designStateRef, destinationRef, selectedLinkRef, selectedNodeRef, selectedEvidenceRef, definition, compiledPlanPatch, solverPatch, executionProfile, semanticFingerprint, currentProjectHash, currentPlanHash, analysisFresh, syncLivePlanAnalysis, displayedPlanAnalysis, pendingAnalysis, analysis, analysisAuthoritative, snapshot, routeByDemand, selectedCanonicalLink, selectedCanonicalNode, selectedDemandId, selectedCanonicalDemand, n1Fresh, verificationFresh, pendingProposals, candidateStale });
 }

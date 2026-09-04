@@ -59,6 +59,7 @@ import { ScenarioSelector } from './scenario-selector';
 import { TopologyCanvas } from './topology-canvas';
 import { ImportNetworkDialog } from './import-network-dialog';
 import { applyUpgradeProfile } from '../lib/upgrade-catalog';
+import { clearLocalWorkspaceDraft, describePlanWork, hasMeaningfulPlanWork } from '../lib/workspace-persistence';
 import {
   registerCollaborativeTools,
   type ModelContextLike,
@@ -91,7 +92,7 @@ const initialProject = loadScenario('continental-service-network');
 
 
 export function useWorkbenchStage2(scope: any) {
-  const { selectedScenarioId, setSelectedScenarioId, project, setProject, plan, setPlan, ephemeralPatch, setEphemeralPatch, publishedPlanAnalysis, setPublishedPlanAnalysis, candidate, setCandidate, comparison, setComparison, contingencies, setContingencies, contingencyStamp, setContingencyStamp, bottleneck, setBottleneck, selectedEvidence, setSelectedEvidence, selectedLinkId, setSelectedLinkId, selectedNodeId, setSelectedNodeId, activity, setActivity, webmcpStatus, setWebmcpStatus, registeredTools, setRegisteredTools, importMessage, setImportMessage, lastToolAnalysis, setLastToolAnalysis, compute, setCompute, progress, setProgress, resilienceStatus, setResilienceStatus, resilienceMessage, setResilienceMessage, analysisStatus, setAnalysisStatus, analysisMessage, setAnalysisMessage, lastAnalysisRuntimeMs, setLastAnalysisRuntimeMs, lastAnalysisExecution, setLastAnalysisExecution, optimizerStatus, setOptimizerStatus, optimizerMessage, setOptimizerMessage, optimizerResult, setOptimizerResult, routingOptimization, setRoutingOptimization, candidateVerification, setCandidateVerification, candidateVerificationStamp, setCandidateVerificationStamp, sharedVerification, setSharedVerification, designState, setDesignState, collaborationNotice, setCollaborationNotice, importDialogOpen, setImportDialogOpen, activeView, setActiveView, analysisTab, setAnalysisTab, leftPanelCollapsed, setLeftPanelCollapsed, rightPanelCollapsed, setRightPanelCollapsed, advancedOpen, setAdvancedOpen, trafficEditorOpen, setTrafficEditorOpen, settingsLinkId, setSettingsLinkId, newPlanName, setNewPlanName, inspectorCapacityDraft, setInspectorCapacityDraft, violationDisplay, setViolationDisplay, directRunControllerRef, analysisControllerRef, optimizerControllerRef, webmcpRegistrationRef, analysisEpochRef, planCounterRef, changeCounterRef, demandCounterRef, projectRef, planRef, ephemeralRef, candidateRef, contingencyRef, contingencyStampRef, analysisRef, verificationRef, designStateRef, destinationRef, selectedLinkRef, selectedNodeRef, selectedEvidenceRef, definition, compiledPlanPatch, solverPatch, executionProfile, semanticFingerprint, currentProjectHash, currentPlanHash, analysisFresh, syncLivePlanAnalysis, displayedPlanAnalysis, pendingAnalysis, analysis, analysisAuthoritative, snapshot, routeByDemand, selectedCanonicalLink, selectedCanonicalNode, selectedDemandId, selectedCanonicalDemand, n1Fresh, verificationFresh, pendingProposals, candidateStale } = scope;
+  const { selectedScenarioId, setSelectedScenarioId, project, setProject, plan, setPlan, ephemeralPatch, setEphemeralPatch, publishedPlanAnalysis, setPublishedPlanAnalysis, candidate, setCandidate, comparison, setComparison, contingencies, setContingencies, contingencyStamp, setContingencyStamp, bottleneck, setBottleneck, selectedEvidence, setSelectedEvidence, selectedLinkId, setSelectedLinkId, selectedNodeId, setSelectedNodeId, activity, setActivity, webmcpStatus, setWebmcpStatus, registeredTools, setRegisteredTools, importMessage, setImportMessage, lastToolAnalysis, setLastToolAnalysis, compute, setCompute, progress, setProgress, resilienceStatus, setResilienceStatus, resilienceMessage, setResilienceMessage, analysisStatus, setAnalysisStatus, analysisMessage, setAnalysisMessage, lastAnalysisRuntimeMs, setLastAnalysisRuntimeMs, lastAnalysisExecution, setLastAnalysisExecution, optimizerStatus, setOptimizerStatus, optimizerMessage, setOptimizerMessage, optimizerResult, setOptimizerResult, routingOptimization, setRoutingOptimization, candidateVerification, setCandidateVerification, candidateVerificationStamp, setCandidateVerificationStamp, sharedVerification, setSharedVerification, designState, setDesignState, collaborationNotice, setCollaborationNotice, importDialogOpen, setImportDialogOpen, activeView, setActiveView, analysisTab, setAnalysisTab, leftPanelCollapsed, setLeftPanelCollapsed, rightPanelCollapsed, setRightPanelCollapsed, advancedOpen, setAdvancedOpen, trafficEditorOpen, setTrafficEditorOpen, settingsLinkId, setSettingsLinkId, newPlanName, setNewPlanName, inspectorCapacityDraft, setInspectorCapacityDraft, violationDisplay, setViolationDisplay, recoveryDraft, setRecoveryDraft, draftPersistenceEnabled, setDraftPersistenceEnabled, pendingConfirmation, setPendingConfirmation, directRunControllerRef, analysisControllerRef, optimizerControllerRef, webmcpRegistrationRef, analysisEpochRef, planCounterRef, changeCounterRef, demandCounterRef, projectRef, planRef, ephemeralRef, candidateRef, contingencyRef, contingencyStampRef, analysisRef, verificationRef, designStateRef, destinationRef, selectedLinkRef, selectedNodeRef, selectedEvidenceRef, definition, compiledPlanPatch, solverPatch, executionProfile, semanticFingerprint, currentProjectHash, currentPlanHash, analysisFresh, syncLivePlanAnalysis, displayedPlanAnalysis, pendingAnalysis, analysis, analysisAuthoritative, snapshot, routeByDemand, selectedCanonicalLink, selectedCanonicalNode, selectedDemandId, selectedCanonicalDemand, n1Fresh, verificationFresh, pendingProposals, candidateStale } = scope;
   const plannedOutageLinkIds = useMemo(() => new Set(plan.changes.flatMap((item:any) => item.type === 'disable_link' && item.target.kind === 'link' ? [item.target.id] : [])), [plan.changes]);
   const plannedOutageNodeIds = useMemo(() => new Set(plan.changes.flatMap((item:any) => item.type === 'disable_node' && item.target.kind === 'node' ? [item.target.id] : [])), [plan.changes]);
   const plannedChangedLinkIds = useMemo(() => new Set(plan.changes.flatMap((item:any) => item.target.kind === 'link' ? [item.target.id] : [])), [plan.changes]);
@@ -100,7 +101,7 @@ export function useWorkbenchStage2(scope: any) {
   const proposalNodeIds = useMemo(() => new Set(plan.proposals.filter((item:any) => item.state === 'pending' && item.change.target.kind === 'node').map((item:any) => item.change.target.kind === 'node' ? item.change.target.id : '')), [plan.proposals]);
   const lockedLinkIds = useMemo(() => new Set(plan.restrictions.lockedLinkIds), [plan.restrictions.lockedLinkIds]);
   const lockedNodeIds = useMemo(() => new Set(plan.restrictions.lockedNodeIds), [plan.restrictions.lockedNodeIds]);
-  const violationLinkIds = useMemo(() => new Set(analysis.result.violations.map((item:any) => item.linkId).filter((id:any): id is string => Boolean(id))), [analysis.result.violations]);
+  const violationLinkIds = useMemo(() => new Set((Boolean(ephemeralPatch) || (analysisAuthoritative && analysisFresh) ? analysis.result.violations : []).map((item:any) => item.linkId).filter((id:any): id is string => Boolean(id))), [analysis.result.violations, analysisAuthoritative, analysisFresh, ephemeralPatch]);
   const visibleViolationCount = violationDisplay.resultId === analysis.result.id ? violationDisplay.count : VIOLATION_RENDER_BATCH_SIZE;
   const visibleViolations = useMemo(() => analysis.result.violations.slice(0, visibleViolationCount), [analysis.result.violations, visibleViolationCount]);
   const selectedLinkIds = useMemo(() => {
@@ -132,6 +133,31 @@ export function useWorkbenchStage2(scope: any) {
   const replaceBaseProject = (next: NetworkProject, planName = 'Change Plan') => {
     clearAllDerived(); const fresh = createChangePlan(next, planName, { id: `plan-${next.id}-${++planCounterRef.current}` }); projectRef.current = next; planRef.current = fresh; setProject(next); setPlan(fresh);
   };
+  const restoreWorkspace = (nextProject: NetworkProject, nextPlan: ChangePlan) => {
+    clearAllDerived();
+    const restoredProject = cloneProject(nextProject);
+    const restoredPlan = clonePlan(nextPlan);
+    projectRef.current = restoredProject; planRef.current = restoredPlan;
+    const bundledScenario = networkTemplates.find((scenario) => {
+      const bundledProject = loadScenario(scenario.id);
+      return bundledProject.id === restoredProject.id && modelHash(bundledProject) === modelHash(restoredProject);
+    });
+    setProject(restoredProject); setPlan(restoredPlan); setSelectedScenarioId(bundledScenario?.id ?? 'imported');
+    setRecoveryDraft(null); setDraftPersistenceEnabled(true);
+  };
+  const requestPlanReset = (title: string, message: string, confirmLabel: string, action: () => void) => {
+    if (!hasMeaningfulPlanWork(projectRef.current, planRef.current)) { action(); return; }
+    const summary = describePlanWork(planRef.current);
+    setPendingConfirmation({ title, message: `${message} The current ChangePlan contains ${summary}. Save the workspace first if you need to preserve it.`, confirmLabel, danger: true, action });
+  };
+  const confirmPendingAction = () => { const request = pendingConfirmation; setPendingConfirmation(null); request?.action(); };
+  const cancelPendingAction = () => setPendingConfirmation(null);
+  const resumeLocalDraft = () => {
+    if (!recoveryDraft) return;
+    restoreWorkspace(recoveryDraft.project, recoveryDraft.plan);
+    setImportMessage(`Resumed browser-local draft saved ${new Date(recoveryDraft.savedAt).toLocaleString()}.`);
+  };
+  const discardLocalDraft = () => { clearLocalWorkspaceDraft(); setRecoveryDraft(null); setDraftPersistenceEnabled(true); };
   const publishCandidate = (nextCandidate: CandidatePlan | null) => {
     candidateRef.current = nextCandidate; setCandidate(nextCandidate); setCandidateVerification(null); setCandidateVerificationStamp(null); setComparison(null);
     if (nextCandidate) {
@@ -153,5 +179,5 @@ export function useWorkbenchStage2(scope: any) {
     if (next.status === 'partial') { setResilienceStatus('partial'); setResilienceMessage(`${next.completedScenarios}/${next.totalEligibleScenarios} link failures tested; PARTIAL COVERAGE. Exact analysis is bounded to the requested scenario count.`); return next; }
     setResilienceStatus('complete'); setResilienceMessage(`${next.completedScenarios}/${next.totalEligibleScenarios} link failures tested; COMPLETE COVERAGE via ${next.executionMode} with ${next.workerCount} worker slot(s).`); return next;
   };
-  Object.assign(scope, { plannedOutageLinkIds, plannedOutageNodeIds, plannedChangedLinkIds, plannedChangedNodeIds, proposalLinkIds, proposalNodeIds, lockedLinkIds, lockedNodeIds, violationLinkIds, visibleViolationCount, visibleViolations, selectedLinkIds, cancelAsync, commitPlan, mutatePlan, setStatusOnly, clearAllDerived, replaceBaseProject, publishCandidate, executeContingencies });
+  Object.assign(scope, { plannedOutageLinkIds, plannedOutageNodeIds, plannedChangedLinkIds, plannedChangedNodeIds, proposalLinkIds, proposalNodeIds, lockedLinkIds, lockedNodeIds, violationLinkIds, visibleViolationCount, visibleViolations, selectedLinkIds, cancelAsync, commitPlan, mutatePlan, setStatusOnly, clearAllDerived, replaceBaseProject, restoreWorkspace, requestPlanReset, confirmPendingAction, cancelPendingAction, resumeLocalDraft, discardLocalDraft, publishCandidate, executeContingencies });
 }

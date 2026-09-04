@@ -123,7 +123,7 @@ test('M3.5D native WebMCP host — real document.modelContext discovery/executio
   const mutation = await executeNative(page, 'add_plan_change', { type: 'disable_link', target: 'selection' }) as Record<string, unknown>;
   expect(mutation).toBeTruthy();
   await expect(page.getByTestId('plan-change-list')).toContainText('Take L1 offline');
-  await expect(page.getByTestId('plan-change-list')).toContainText('Agent-authored');
+  await expect(page.getByTestId('plan-change-list')).toContainText('Agent');
   await expect(page.getByTestId('link-inspector-L1')).toContainText('Planned outage');
 
   const analysis = await executeNative(page, 'analyze_plan') as Record<string, unknown>;
@@ -174,7 +174,7 @@ async function importLevel4Reference(page: import('@playwright/test').Page) {
   await expect(page.getByTestId('import-review')).toBeVisible();
   await page.getByTestId('open-imported-network').click();
   await expect(page.getByTestId('topology-link-X')).toBeVisible();
-  await page.getByText('Constraints', { exact: true }).click();
+  await page.getByTestId('plan-constraints').locator('summary').click();
   await page.getByTestId('allow-routing-changes').check();
 }
 
@@ -204,7 +204,7 @@ test('Level 4A native WebMCP replan — human protects X and native propose_miti
   expect(second.verification).toBe('verified');
   await expect(page.getByTestId('candidate-proposals')).toContainText('Y', { timeout: 30_000 });
   await expect(page.getByTestId('candidate-proposals')).not.toContainText('Set X capacity');
-  await expect(page.getByTestId('network-design-summary')).toContainText(/cost 8/i);
+  await expect(page.getByTestId('network-design-summary').locator('.proposal-metrics')).toContainText(/Cost\s*8/i);
 
   const verification = await executeNative(page, 'verify_plan') as Record<string, any>;
   expect(verification.status).toBe('verified');

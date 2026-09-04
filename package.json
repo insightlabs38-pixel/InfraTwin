@@ -22,7 +22,8 @@
     "benchmark:scale:features": "node --experimental-strip-types benchmarks/feature-scale.ts",
     "test:webmcp:native": "WEBMCP_NATIVE=1 playwright test e2e/phase35d-native-webmcp.spec.ts --headed --workers=1 --output=test-results-native --reporter=list",
     "benchmark:level4-design": "node --experimental-strip-types benchmarks/level4-design.ts",
-    "benchmark:level4-scale": "node --experimental-strip-types benchmarks/level4-scale.ts"
+    "benchmark:level4-scale": "node --experimental-strip-types benchmarks/level4-scale.ts",
+    "test:demo:native": "WEBMCP_DEMO_CAPTURE=1 WEBMCP_NATIVE=1 playwright test e2e/demo/demo-clips.spec.ts --headed --workers=1 --output=test-results-demo --reporter=list"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

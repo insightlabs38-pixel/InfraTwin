@@ -9,6 +9,7 @@ import { computeDeterministicLayout, layoutBounds, layoutCacheKey, searchTopolog
 interface TopologyCanvasProps {
   project: NetworkProject;
   analysis: CapacityAnalysis;
+  analysisAuthoritative: boolean;
   selectedLinkIds: Set<string>;
   selectedLinkId: string | null;
   selectedNodeId: string | null;
@@ -74,6 +75,8 @@ export function TopologyCanvas(props: TopologyCanvasProps) {
   const [viewBox, setViewBox] = useState<ViewBoxState>({ x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [activeSearchIndex, setActiveSearchIndex] = useState(0);
+  const [hover, setHover] = useState<{ kind: 'node' | 'link'; id: string; clientX: number; clientY: number } | null>(null);
   const [displayMode, setDisplayMode] = useState<TopologyDisplayMode>('all');
   const [focusedRegion, setFocusedRegion] = useState<string | null>(null);
   const [enabledRegions, setEnabledRegions] = useState<Set<string>>(new Set());
@@ -91,6 +94,7 @@ export function TopologyCanvas(props: TopologyCanvasProps) {
   const canonicalLinkById = useMemo(() => new Map(project.links.map((link) => [link.id, link])), [project.links]);
   const routeByDemand = useMemo(() => new Map(analysis.routing.routes.map((route) => [route.demandId, route])), [analysis.routing.routes]);
   const searchResults = useMemo(() => searchTopology(project, query), [project, query]);
+  useEffect(() => { setActiveSearchIndex(0); }, [query]);
   const selectedDemand = props.selectedDemandId ? project.demands.find((demand) => demand.id === props.selectedDemandId) : undefined;
 
   const fitNetwork = () => setViewBox(paddedView(layoutBounds(layout), 90));
@@ -216,9 +220,9 @@ export function TopologyCanvas(props: TopologyCanvasProps) {
     setViewBox({ ...drag.viewBox, x: drag.viewBox.x - dx, y: drag.viewBox.y - dy });
   };
 
-  const hitTestCanvas = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const point = eventPoint(event.clientX, event.clientY, canvas);
+  const canvasObjectAt = (clientX: number, clientY: number) => {
+    const canvas = canvasRef.current; if (!canvas) return null;
+    const point = eventPoint(clientX, clientY, canvas);
     const worldPerPixel = viewBox.width / Math.max(1, point.rect.width);
     let nodeHit: { id: string; distance: number } | null = null;
     for (const node of snapshot.nodes) {
@@ -228,9 +232,7 @@ export function TopologyCanvas(props: TopologyCanvasProps) {
       const threshold = (nodePriority(node.id) ? 18 : 13) * worldPerPixel;
       if (distance <= threshold && (!nodeHit || distance < nodeHit.distance)) nodeHit = { id: node.id, distance };
     }
-    if (nodeHit) {
-      setMultiLinkIds(new Set()); props.onSelectNode(nodeHit.id); setSearchHighlight(null); return;
-    }
+    if (nodeHit) return { kind: 'node' as const, id: nodeHit.id };
     let linkHit: { id: string; distance: number } | null = null;
     for (const link of snapshot.links) {
       if (!nodeVisible(link.source) || !nodeVisible(link.target)) continue;
@@ -239,12 +241,26 @@ export function TopologyCanvas(props: TopologyCanvasProps) {
       const threshold = (linkPriority(link.id) ? 10 : 7) * worldPerPixel;
       if (distance <= threshold && (!linkHit || distance < linkHit.distance)) linkHit = { id: link.id, distance };
     }
-    if (linkHit) selectLink(linkHit.id, event);
+    return linkHit ? { kind: 'link' as const, id: linkHit.id } : null;
+  };
+
+  const hitTestCanvas = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const hit = canvasObjectAt(event.clientX, event.clientY);
+    if (!hit) return;
+    if (hit.kind === 'node') { setMultiLinkIds(new Set()); props.onSelectNode(hit.id); setSearchHighlight(null); return; }
+    selectLink(hit.id, event);
   };
 
   const finishCanvasPointer = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const drag = dragRef.current; dragRef.current = null;
     if (drag && !drag.moved) hitTestCanvas(event);
+  };
+
+  const updateCanvasHover = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    movePan(event);
+    if (dragRef.current?.moved) { setHover(null); return; }
+    const hit = canvasObjectAt(event.clientX, event.clientY);
+    setHover(hit ? { ...hit, clientX: event.clientX, clientY: event.clientY } : null);
   };
 
   useEffect(() => {
@@ -263,16 +279,16 @@ export function TopologyCanvas(props: TopologyCanvasProps) {
       const bounds = regionBounds.get(region); if (!bounds) continue;
       context.globalAlpha = focusedRegion && focusedRegion !== region ? 0.16 : 0.55;
       context.strokeStyle = '#31435b'; context.lineWidth = 1 * worldPerPixel; context.setLineDash([6 * worldPerPixel, 8 * worldPerPixel]);
-      context.strokeRect(bounds.minX - 48, bounds.minY - 48, bounds.width + 96, bounds.height + 96);
+      context.strokeRect(bounds.minX - 56, bounds.minY - 68, bounds.width + 112, bounds.height + 124);
       context.setLineDash([]); context.fillStyle = '#63768f'; context.font = `700 ${12 * worldPerPixel}px ui-sans-serif, system-ui`;
-      context.fillText(region, bounds.minX - 28, bounds.minY - 18);
+      context.fillText(region, bounds.minX - 30, bounds.minY - 48);
     }
 
     const orderedLinks = [...snapshot.links].sort((a, b) => Number(linkPriority(a.id)) - Number(linkPriority(b.id)) || a.id.localeCompare(b.id));
     for (const link of orderedLinks) {
       const source = layout[link.source]; const target = layout[link.target];
       if (!source || !target || !nodeVisible(link.source) || !nodeVisible(link.target)) continue;
-      const utilization = analysis.routing.linkUtilizationPct[link.id] ?? 0;
+      const utilization = props.analysisAuthoritative ? (analysis.routing.linkUtilizationPct[link.id] ?? 0) : 0;
       const disabled = link.available === false; const priority = linkPriority(link.id);
       const selected = props.selectedLinkIds.has(link.id) || props.selectedLinkId === link.id || multiLinkIds.has(link.id);
       context.globalAlpha = shouldDimLink(link.id, link.source, link.target) ? 0.12 : disabled ? 0.35 : 0.9;
@@ -322,23 +338,43 @@ export function TopologyCanvas(props: TopologyCanvasProps) {
       <div className="topology-toolbar">
         <div className="topology-search-wrap">
           <label htmlFor="topology-search" className="sr-only">Search topology</label>
-          <input id="topology-search" data-testid="topology-search" value={query} placeholder="Search node, link, or demand" onFocus={() => { if (query.trim()) setSearchOpen(true); }} onChange={(event) => { setQuery(event.target.value); setSearchHighlight(null); setSearchOpen(true); }} onKeyDown={(event) => { if (event.key === 'Escape') { setSearchOpen(false); return; } if (event.key === 'Enter' && searchResults[0]) chooseSearchResult(searchResults[0]); }} />
-          {searchOpen && query.trim() && <div className="topology-search-results" role="listbox" aria-label="Topology search results">
-            {searchResults.length ? searchResults.map((result) => <button key={`${result.kind}:${result.id}`} type="button" role="option" data-testid={`search-result-${result.kind}-${result.id}`} onClick={() => chooseSearchResult(result)}><span>{result.kind.toUpperCase()}</span><strong>{result.label}</strong><small>{result.secondary}</small></button>) : <div className="empty-inline">No matching semantic objects.</div>}
+          <input
+            id="topology-search"
+            data-testid="topology-search"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={searchOpen && Boolean(query.trim())}
+            aria-controls="topology-search-results"
+            aria-activedescendant={searchOpen && searchResults[activeSearchIndex] ? `topology-search-option-${activeSearchIndex}` : undefined}
+            value={query}
+            placeholder="Search node, link, or demand"
+            onFocus={() => { if (query.trim()) setSearchOpen(true); }}
+            onChange={(event) => { setQuery(event.target.value); setSearchHighlight(null); setSearchOpen(true); }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') { setSearchOpen(false); return; }
+              if (event.key === 'ArrowDown' && searchResults.length) { event.preventDefault(); setSearchOpen(true); setActiveSearchIndex((index) => (index + 1) % searchResults.length); return; }
+              if (event.key === 'ArrowUp' && searchResults.length) { event.preventDefault(); setSearchOpen(true); setActiveSearchIndex((index) => (index - 1 + searchResults.length) % searchResults.length); return; }
+              if (event.key === 'Enter' && searchResults[activeSearchIndex]) { event.preventDefault(); chooseSearchResult(searchResults[activeSearchIndex]); }
+            }}
+          />
+          {searchOpen && query.trim() && <div id="topology-search-results" className="topology-search-results" role="listbox" aria-label="Topology search results">
+            {searchResults.length ? searchResults.map((result, index) => <button id={`topology-search-option-${index}`} key={`${result.kind}:${result.id}`} type="button" role="option" aria-selected={index === activeSearchIndex} data-testid={`search-result-${result.kind}-${result.id}`} onMouseEnter={() => setActiveSearchIndex(index)} onClick={() => chooseSearchResult(result)}><span>{result.kind.toUpperCase()}</span><strong>{result.label}</strong><small>{result.secondary}</small></button>) : <div className="empty-inline">No matching network objects.</div>}
           </div>}
         </div>
-        <div className="viewport-actions">
-          <button type="button" data-testid="fit-network" onClick={fitNetwork}>Fit network</button>
-          <button type="button" data-testid="fit-selection" onClick={fitSelection}>Fit selection</button><button type="button" data-testid="zoom-in" onClick={() => zoomView(0.84)}>Zoom in</button><button type="button" data-testid="zoom-out" onClick={() => zoomView(1.18)}>Zoom out</button>
-          <button type="button" data-testid="reset-view" onClick={resetView}>Reset view</button>
-          <button type="button" data-testid="relayout" onClick={() => setLayoutGeneration((value) => value + 1)}>Re-layout</button>
+        <div className="viewport-actions" aria-label="Topology view controls">
+          <button type="button" data-testid="fit-network" onClick={fitNetwork}>Fit</button>
+          <button type="button" data-testid="fit-selection" onClick={fitSelection} title="Fit current selection">Selection</button>
+          <button type="button" data-testid="zoom-out" aria-label="Zoom out" title="Zoom out" onClick={() => zoomView(1.18)}>−</button>
+          <button type="button" data-testid="zoom-in" aria-label="Zoom in" title="Zoom in" onClick={() => zoomView(0.84)}>+</button>
+          <button type="button" data-testid="reset-view" className="utility-action" onClick={resetView}>Reset</button>
+          <button type="button" data-testid="relayout" className="utility-action" onClick={() => setLayoutGeneration((value) => value + 1)}>Re-layout</button>
         </div>
       </div>
 
       <div className="topology-filterbar">
-        <fieldset className="display-mode"><legend>Show</legend>{(['all', 'change-plan', 'violations', 'selected-routes'] as TopologyDisplayMode[]).map((mode) => <label key={mode}><input data-testid={`display-mode-${mode}`} type="radio" name="topology-display" checked={displayMode === mode} onChange={() => setDisplayMode(mode)} />{mode === 'all' ? 'All' : mode === 'change-plan' ? 'Change Plan' : mode === 'violations' ? 'Violations' : 'Selected routes'}</label>)}</fieldset>
-        {regions.length > 0 && <details className="region-filter" open={regions.length <= 6}><summary>Regions <span>{enabledRegions.size}/{regions.length}</span></summary><div>{regions.map((region) => <label key={region}><input data-testid={`region-filter-${regionSlug(region)}`} type="checkbox" checked={enabledRegions.has(region)} onChange={(event) => setEnabledRegions((current) => { const next = new Set(current); if (event.target.checked) next.add(region); else next.delete(region); return next; })} /><span>{region}</span><button type="button" className={focusedRegion === region ? 'active' : ''} onClick={(event) => { event.preventDefault(); setFocusedRegion((current) => current === region ? null : region); const ids = project.nodes.filter((node) => node.region === region).map((node) => node.id); if (ids.length) focusIds(ids, 105); }}>Focus</button></label>)}</div></details>}
-        <div className="viewport-readout" data-testid="viewport-readout">{lod === 'out' ? 'Overview' : lod === 'medium' ? 'Network detail' : 'Engineering detail'} · {Math.round(zoomFactor * 100)}% · {rendererMode === 'canvas' ? 'Canvas' : 'SVG'}</div>
+        <fieldset className="display-mode"><legend>View</legend>{(['all', 'change-plan', 'violations', 'selected-routes'] as TopologyDisplayMode[]).map((mode) => <label key={mode}><input data-testid={`display-mode-${mode}`} type="radio" name="topology-display" checked={displayMode === mode} onChange={() => setDisplayMode(mode)} />{mode === 'all' ? 'All' : mode === 'change-plan' ? 'Plan' : mode === 'violations' ? 'Violations' : 'Routes'}</label>)}</fieldset>
+        {regions.length > 0 && <details className="region-filter"><summary>Regions <span>{enabledRegions.size}/{regions.length}</span></summary><div>{regions.map((region) => <div className="region-filter-row" key={region}><label><input data-testid={`region-filter-${regionSlug(region)}`} type="checkbox" checked={enabledRegions.has(region)} onChange={(event) => setEnabledRegions((current) => { const next = new Set(current); if (event.target.checked) next.add(region); else next.delete(region); return next; })} /><span>{region}</span></label><button type="button" className={focusedRegion === region ? 'active' : ''} onClick={() => { setFocusedRegion((current) => current === region ? null : region); const ids = project.nodes.filter((node) => node.region === region).map((node) => node.id); if (ids.length) focusIds(ids, 105); }}>Focus</button></div>)}</div></details>}
+        <div className="viewport-readout" data-testid="viewport-readout">{lod === 'out' ? 'Overview' : lod === 'medium' ? 'Network detail' : 'Engineering detail'} · {Math.round(zoomFactor * 100)}%</div>
       </div>
 
       {multiLinkIds.size > 1 && <div className="multi-selection-bar" data-testid="multi-selection-bar"><strong>{multiLinkIds.size} links selected</strong><button type="button" onClick={() => focusIds([...multiLinkIds].flatMap((id) => { const link = canonicalLinkById.get(id); return link ? [link.source, link.target] : []; }), 100)}>Focus selected</button>{props.onBatchPlannedOutage && <button type="button" onClick={() => props.onBatchPlannedOutage?.([...multiLinkIds].sort())}>Plan outage</button>}{props.onBatchLockLinks && <><button type="button" onClick={() => props.onBatchLockLinks?.([...multiLinkIds].sort(), true)}>Lock selected</button><button type="button" onClick={() => props.onBatchLockLinks?.([...multiLinkIds].sort(), false)}>Unlock selected</button></>}</div>}
@@ -357,7 +393,8 @@ export function TopologyCanvas(props: TopologyCanvasProps) {
           data-renderer="canvas"
           onWheel={zoomAt}
           onPointerDown={beginPan}
-          onPointerMove={movePan}
+          onPointerMove={updateCanvasHover}
+          onPointerLeave={() => setHover(null)}
           onPointerUp={finishCanvasPointer}
           onPointerCancel={() => { dragRef.current = null; }}
         /> : (
@@ -380,12 +417,12 @@ export function TopologyCanvas(props: TopologyCanvasProps) {
             {regions.map((region) => {
               if (!enabledRegions.has(region)) return null;
               const bounds = regionBounds.get(region); if (!bounds) return null;
-              return <g key={`region:${region}`} className={`region-hull ${focusedRegion && focusedRegion !== region ? 'dimmed' : ''}`}><rect x={bounds.minX - 48} y={bounds.minY - 48} width={bounds.width + 96} height={bounds.height + 96} rx={44} /><text x={bounds.minX - 28} y={bounds.minY - 18}>{region}</text></g>;
+              return <g key={`region:${region}`} className={`region-hull ${focusedRegion && focusedRegion !== region ? 'dimmed' : ''}`}><rect x={bounds.minX - 56} y={bounds.minY - 68} width={bounds.width + 112} height={bounds.height + 124} rx={44} /><text x={bounds.minX - 30} y={bounds.minY - 48}>{region}</text></g>;
             })}
             <g className="link-layer">
               {snapshot.links.map((link) => {
                 const source = layout[link.source]; const target = layout[link.target]; if (!source || !target || !nodeVisible(link.source) || !nodeVisible(link.target)) return null;
-                const utilization = analysis.routing.linkUtilizationPct[link.id] ?? 0;
+                const utilization = props.analysisAuthoritative ? (analysis.routing.linkUtilizationPct[link.id] ?? 0) : 0;
                 const disabled = link.available === false;
                 const selected = props.selectedLinkIds.has(link.id) || props.selectedLinkId === link.id || multiLinkIds.has(link.id);
                 const dimmed = shouldDimLink(link.id, link.source, link.target);
@@ -400,14 +437,13 @@ export function TopologyCanvas(props: TopologyCanvasProps) {
                 const linkDx = target.x - source.x; const linkDy = target.y - source.y; const linkLength = Math.hypot(linkDx, linkDy); const linkAngleDeg = Math.atan2(linkDy, linkDx) * 180 / Math.PI;
                 const midpointX = (source.x + target.x) / 2; const midpointY = (source.y + target.y) / 2;
                 return (
-                  <g key={link.id} className="link-group" onClick={(event) => { event.stopPropagation(); selectLink(link.id, event); }}>
+                  <g key={link.id} className="link-group" onPointerEnter={(event) => setHover({ kind: 'link', id: link.id, clientX: event.clientX, clientY: event.clientY })} onPointerMove={(event) => setHover({ kind: 'link', id: link.id, clientX: event.clientX, clientY: event.clientY })} onPointerLeave={() => setHover(null)} onClick={(event) => { event.stopPropagation(); selectLink(link.id, event); }}>
                     <line x1={source.x} y1={source.y} x2={target.x} y2={target.y} className={classes} style={{ strokeWidth: clamp(1.4 + utilization / 48 + (priority ? 1.5 : 0), 1.4, 7) }} vectorEffect="non-scaling-stroke" />
-                    <rect x={source.x} y={source.y - 8} width={linkLength} height={16} transform={`rotate(${linkAngleDeg} ${source.x} ${source.y})`} className="link-hit-target" data-testid={`topology-link-${link.id}`} tabIndex={0} role="button" aria-label={`${link.id}: ${disabled ? 'offline' : `${pct(utilization)} utilized`}. ${selected ? 'Selected.' : ''}`} aria-pressed={selected} onClick={(event) => { event.stopPropagation(); selectLink(link.id, event); }} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectLink(link.id, event); } }} />
-                    {showLabel && <text x={midpointX} y={midpointY - 8} className={`link-label ${priority ? 'priority-label' : 'normal-context'}`}>{link.id}{lod === 'in' ? ` · ${disabled ? 'OFF' : `${pct(utilization)} · ${link.capacityGbps}G`}` : ''}{props.lockedLinkIds.has(link.id) ? ' · LOCK' : ''}</text>}
+                    <rect x={source.x} y={source.y - 8} width={linkLength} height={16} transform={`rotate(${linkAngleDeg} ${source.x} ${source.y})`} className="link-hit-target" data-testid={`topology-link-${link.id}`} tabIndex={0} role="button" aria-label={`${link.id}: ${disabled ? 'offline' : props.analysisAuthoritative ? `${pct(utilization)} utilized` : 'not analyzed'}. ${selected ? 'Selected.' : ''}`} aria-pressed={selected} onClick={(event) => { event.stopPropagation(); selectLink(link.id, event); }} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectLink(link.id, event); } }} />
+                    {showLabel && <text x={midpointX} y={midpointY - 8} className={`link-label ${priority ? 'priority-label' : 'normal-context'}`}>{link.id}{lod === 'in' ? ` · ${disabled ? 'OFF' : props.analysisAuthoritative ? `${pct(utilization)} · ${link.capacityGbps}G` : `${link.capacityGbps}G · NOT ANALYZED`}` : ''}{props.lockedLinkIds.has(link.id) ? ' · LOCK' : ''}</text>}
                     {props.plannedOutageLinkIds.has(link.id) && <text x={midpointX} y={midpointY + 11} className="state-badge">OUTAGE</text>}
                     {props.proposalLinkIds.has(link.id) && <text x={midpointX} y={midpointY + 11} className="state-badge proposal">PROPOSAL</text>}
                     {props.violationLinkIds.has(link.id) && <text x={midpointX} y={midpointY + 11} className="state-badge violation">!</text>}
-                    <title>{`${link.id}: ${gbps(analysis.routing.linkLoadsGbps[link.id] ?? 0)} / ${gbps(link.capacityGbps)}`}</title>
                   </g>
                 );
               })}
@@ -421,14 +457,26 @@ export function TopologyCanvas(props: TopologyCanvasProps) {
                 const classes = ['node-circle', node.available === false ? 'disabled-node' : '', props.plannedOutageNodeIds.has(node.id) ? 'planned-outage-node' : '', props.plannedChangedNodeIds.has(node.id) ? 'planned-change-node' : '', props.proposalNodeIds.has(node.id) ? 'proposal-node' : '', props.lockedNodeIds.has(node.id) ? 'locked-node' : '', selected ? 'selected-node' : '', dimmed ? 'dimmed' : ''].filter(Boolean).join(' ');
                 const showId = lod !== 'out' || priority;
                 const showName = lod === 'in' && (priority || project.nodes.length <= 50);
-                return <g key={node.id} transform={`translate(${point.x} ${point.y})`} className="node-group" role="button" tabIndex={0} data-testid={`topology-node-${node.id}`} aria-pressed={selected} aria-label={`${node.name} ${node.id}${node.region ? `, ${node.region}` : ''}. Select node for Change Plan actions.`} onClick={(event) => { event.stopPropagation(); setMultiLinkIds(new Set()); props.onSelectNode(node.id); setSearchHighlight(null); }} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setMultiLinkIds(new Set()); props.onSelectNode(node.id); } }}><circle r={lod === 'out' ? 7 : lod === 'medium' ? 11 : 16} className={classes} vectorEffect="non-scaling-stroke" />{showId && <text y={lod === 'in' ? -21 : -15} textAnchor="middle" className={`node-id ${priority ? 'priority-label' : ''}`}>{node.id}</text>}{showName && <text y={31} textAnchor="middle" className="node-name">{node.name}</text>}{props.lockedNodeIds.has(node.id) && <text x={14} y={-13} className="node-state-badge">L</text>}</g>;
+                return <g key={node.id} transform={`translate(${point.x} ${point.y})`} className="node-group" role="button" onPointerEnter={(event) => setHover({ kind: 'node', id: node.id, clientX: event.clientX, clientY: event.clientY })} onPointerMove={(event) => setHover({ kind: 'node', id: node.id, clientX: event.clientX, clientY: event.clientY })} onPointerLeave={() => setHover(null)} tabIndex={0} data-testid={`topology-node-${node.id}`} aria-pressed={selected} aria-label={`${node.name} ${node.id}${node.region ? `, ${node.region}` : ''}. Select node for Change Plan actions.`} onClick={(event) => { event.stopPropagation(); setMultiLinkIds(new Set()); props.onSelectNode(node.id); setSearchHighlight(null); }} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setMultiLinkIds(new Set()); props.onSelectNode(node.id); } }}><circle r={lod === 'out' ? 7 : lod === 'medium' ? 11 : 16} className={classes} vectorEffect="non-scaling-stroke" />{showId && <text y={lod === 'in' ? -21 : -15} textAnchor="middle" className={`node-id ${priority ? 'priority-label' : ''}`}>{node.id}</text>}{showName && <text y={31} textAnchor="middle" className="node-name">{node.name}</text>}{props.lockedNodeIds.has(node.id) && <text x={14} y={-13} className="node-state-badge">L</text>}</g>;
               })}
             </g>
           </svg>
         )}
       </div>
 
-      <div className="topology-legend" aria-label="Graph legend"><span><i className="legend-line normal" />normal</span><span><i className="legend-line planned" />planned change</span><span><i className="legend-line proposal" />proposal / dashed</span><span><i className="legend-line locked" />locked / double outline</span><span><i className="legend-line violation" />violation / ! badge</span><span><i className="legend-line selected" />selected / glow</span></div>
+      <div className="topology-legend" aria-label="Graph legend"><span><i className="legend-line planned" />Planned</span><span><i className="legend-line proposal" />Proposal</span><span><i className="legend-line locked" />Locked</span><span><i className="legend-line violation" />Violation</span><span><i className="legend-line selected" />Selected</span></div>
+      {hover && (() => {
+        if (hover.kind === 'link') {
+          const link = canonicalLinkById.get(hover.id); if (!link) return null;
+          const load = props.analysisAuthoritative ? analysis.routing.linkLoadsGbps[link.id] : undefined;
+          const util = props.analysisAuthoritative ? analysis.routing.linkUtilizationPct[link.id] : undefined;
+          const states = [props.plannedChangedLinkIds.has(link.id) ? 'Planned' : '', props.proposalLinkIds.has(link.id) ? 'Proposal' : '', props.lockedLinkIds.has(link.id) ? 'Locked' : '', props.violationLinkIds.has(link.id) ? 'Violation' : ''].filter(Boolean);
+          return <div className="topology-hover-tooltip" role="status" style={{ left: hover.clientX + 14, top: hover.clientY + 14 }}><strong>{link.id}</strong><span>{link.source} ↔ {link.target}</span><span>{link.capacityGbps} Gbps capacity</span><span>{load === undefined || util === undefined ? 'Not analyzed' : `${gbps(load)} load · ${pct(util)} utilized`}</span>{states.length > 0 && <small>{states.join(' · ')}</small>}</div>;
+        }
+        const node = canonicalNodeById.get(hover.id); if (!node) return null;
+        const states = [props.plannedChangedNodeIds.has(node.id) ? 'Planned' : '', props.proposalNodeIds.has(node.id) ? 'Proposal' : '', props.lockedNodeIds.has(node.id) ? 'Locked' : ''].filter(Boolean);
+        return <div className="topology-hover-tooltip" role="status" style={{ left: hover.clientX + 14, top: hover.clientY + 14 }}><strong>{node.name}</strong><span>{node.id}{node.region ? ` · ${node.region}` : ''}</span><span>{node.available === false ? 'Unavailable' : 'Available'}</span>{states.length > 0 && <small>{states.join(' · ')}</small>}</div>;
+      })()}
 
     </div>
   );
